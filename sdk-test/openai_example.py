@@ -15,7 +15,7 @@ def summarize_text(text: str) -> str:
                 "content": f"Summarize the following passage in a few sentences:\n\n{text}"
             },
         ],
-        max_output_tokens=1000,
+        max_output_tokens=1024,
     )
     return response.output_text.strip()
 
