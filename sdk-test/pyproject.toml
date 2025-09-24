@@ -5,7 +5,12 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "accelerate>=1.10.1",
     "anthropic>=0.68.0",
     "google-genai>=1.38.0",
+    "litellm>=1.77.4",
+    "ollama>=0.5.4",
     "openai>=1.109.0",
+    "torch>=2.8.0",
+    "transformers>=4.56.2",
 ]
