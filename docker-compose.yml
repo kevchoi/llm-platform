@@ -1,0 +1,17 @@
+services:
+  api:
+    build:
+      context: ./api
+    environment:
+      LLAMA_CPP_URL: http://llm:8080
+    ports:
+      - 8000:8000
+    depends_on:
+      - llm
+    restart: unless-stopped
+  llm:
+    build:
+      context: ./llm
+    ports:
+      - 8080:8080
+    restart: unless-stopped

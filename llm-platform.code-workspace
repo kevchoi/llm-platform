@@ -5,6 +5,12 @@
 		},
 		{
 			"path": "api"
+		},
+		{
+			"path": "llm"
+		},
+		{
+			"path": "."
 		}
 	],
 	"settings": {}
