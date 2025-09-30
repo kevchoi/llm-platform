@@ -1,4 +1,14 @@
 {
-	"folders": [],
+	"folders": [
+		{
+			"path": "tgi"
+		},
+		{
+			"path": "old"
+		},
+		{
+			"path": "."
+		}
+	],
 	"settings": {}
 }

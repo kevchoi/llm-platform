@@ -1,0 +1,37 @@
+name: Deploy to AWS EC2
+
+# This workflow runs on every push to the 'main' branch
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checks out the repository code so the runner can access it
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Deploys the stack to the EC2 instance
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.AWS_HOST }}
+          username: ${{ secrets.AWS_USER }}
+          key: ${{ secrets.AWS_SSH_KEY }}
+          script: |
+            # Navigate to the project directory
+            cd qwen-stack
+
+            # Pull the latest Docker images
+            docker compose pull
+
+            # Stop and restart the services with the new code/images
+            # --force-recreate ensures containers are updated if their config changed
+            docker compose up -d --force-recreate
+
+            # Clean up old, unused Docker images to save space
+            docker image prune -f
