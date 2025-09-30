@@ -1,17 +1,4 @@
 {
-	"folders": [
-		{
-			"path": "sdk-test"
-		},
-		{
-			"path": "api"
-		},
-		{
-			"path": "llm"
-		},
-		{
-			"path": "."
-		}
-	],
+	"folders": [],
 	"settings": {}
 }
