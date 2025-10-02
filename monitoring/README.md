@@ -20,3 +20,36 @@ docker compose version
 docker compose up -d
 docker compose ps
 ```
+
+
+on the TGI server:
+Testing TGI
+```
+curl http://localhost:8080/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "meta-llama/Llama-3.2-1B",
+    "prompt": "Hello, my name is",
+    "max_tokens": 20
+  }'
+```
+Test DCG
+```
+curl http://localhost:9400/metrics
+```
+Test Node exporter
+```
+curl http://localhost:9100/metrics
+```
+
+opening metrics:
+first, make sure to expose the enpdoints on AWS. then,
+on the monitoring server, grafana is exposed through 3000
+prometheus is exposed through 9090
+
+also, make sure to add inbound rules to your GPU instance
+
+use the private IPv4  address
+
+ISSUE: 
+had some issues, but restarting the instance seemed to help...
