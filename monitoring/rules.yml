@@ -1,0 +1,61 @@
+groups:
+- name: llm_base_metrics_tgi
+  rules:
+  # Request metrics
+  - record: llm_requests_total
+    expr: tgi_request_count
+  - record: llm_requests_failed_total
+    expr: tgi_request_failure
+  # Token metrics
+  - record: llm_output_tokens_total
+    expr: tgi_request_generated_tokens_sum
+  - record: llm_input_tokens_total
+    expr: tgi_request_input_length_sum
+  # Latency metrics
+  - record: llm_e2e_duration_seconds_bucket
+    expr: tgi_request_duration_bucket
+  - record: llm_time_per_output_token_seconds_bucket
+    expr: tgi_request_mean_time_per_token_duration_bucket
+  # Queue metrics
+  - record: llm_queue_duration_seconds_bucket
+    expr: tgi_request_queue_duration_bucket
+  - record: llm_queue_depth
+    expr: tgi_queue_size
+- name: llm_performance_metrics
+  rules:
+  # Error metrics
+  - record: llm:requests_error_rate:rate5m
+    expr: |
+      sum by (job) (rate(llm_requests_failed_total[5m]))
+      /
+      sum by (job) (rate(llm_requests_total[5m]))
+  # Latency metrics
+  - record: llm:e2e_duration_seconds:p95_rate5m
+    expr: histogram_quantile(0.95, sum by (le, job) (rate(llm_e2e_duration_seconds_bucket[5m])))
+  # Time Per Output Token (TPOT) measures generation speed after the first token.
+  - record: llm:time_per_output_token_seconds:p95_rate5m
+    expr: histogram_quantile(0.95, sum by (le, job) (rate(llm_time_per_output_token_seconds_bucket[5m])))
+  # Throughput metrics
+  - record: llm:requests_per_second:rate5m
+    expr: sum by (job) (rate(llm_requests_total[5m]))
+  - record: llm:output_tokens_per_second:rate5m
+    expr: sum by (job) (rate(llm_output_tokens_total[5m]))
+  - record: llm:input_tokens_per_second:rate5m
+    expr: sum by (job) (rate(llm_input_tokens_total[5m]))
+  # Queue metrics
+  - record: llm:queue_depth:avg_by_job
+    expr: avg by (job) (llm_queue_depth)
+  - record: llm:queue_duration_seconds:p95_rate5m
+    expr: histogram_quantile(0.95, sum by (le, job) (rate(llm_queue_duration_seconds_bucket[5m])))
+- name: llm_resource_metrics
+  rules:
+  # GPU metrics
+  - record: instance:gpu_utilization_percent:gauge
+    expr: DCGM_FI_DEV_GPU_UTIL
+  - record: instance:gpu_memory_usage_percent:gauge
+    expr: 100 * (DCGM_FI_DEV_FB_USED/(DCGM_FI_DEV_FB_FREE+DCGM_FI_DEV_FB_USED))
+  # Host metrics
+  - record: instance:cpu_utilization_percent:avg_rate5m
+    expr: (1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m]))) * 100
+  - record: instance:host_memory_usage_percent:gauge
+    expr: 100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))
