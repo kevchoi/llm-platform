@@ -3,7 +3,6 @@ from locust import HttpUser, task, between
 # ran to about 350 RPS; saw failures at 25 RPS
 class TGIUser(HttpUser):
     wait_time = between(1, 3)
-    host = "http://ec2-3-91-30-164.compute-1.amazonaws.com:8080"
 
     @task
     def generate_text(self):
@@ -20,5 +19,5 @@ class TGIUser(HttpUser):
             json=payload,
             headers={"Content-Type": "application/json"}
         )
-        
-        print(response.json())
+        if response.status_code != 200:
+            response.failure(f"Request failed with status {response.status_code}")
