@@ -1,26 +1,26 @@
 groups:
-- name: llm_base_metrics_vllm
+- name: llm_base_metrics_tgi
   rules:
   # Request metrics
   - record: llm_requests_total
-    expr: vllm:e2e_request_latency_seconds_count
+    expr: tgi_request_count
   - record: llm_requests_failed_total
-    expr: vllm:e2e_request_latency_seconds_count - vllm:request_success_total
+    expr: tgi_request_failure
   # Token metrics
   - record: llm_output_tokens_total
-    expr: vllm:generation_tokens_total
+    expr: tgi_request_generated_tokens_sum
   - record: llm_input_tokens_total
-    expr: vllm:prompt_tokens_total
+    expr: tgi_request_input_length_sum
   # Latency metrics
   - record: llm_e2e_duration_seconds_bucket
-    expr: vllm:e2e_request_latency_seconds_bucket
+    expr: tgi_request_duration_bucket
   - record: llm_time_per_output_token_seconds_bucket
-    expr: vllm:time_per_output_token_seconds_bucket
+    expr: tgi_request_mean_time_per_token_duration_bucket
   # Queue metrics
   - record: llm_queue_duration_seconds_bucket
-    expr: vllm:request_queue_time_seconds_bucket
+    expr: tgi_request_queue_duration_bucket
   - record: llm_queue_depth
-    expr: vllm:num_requests_waiting
+    expr: tgi_queue_size
 - name: llm_performance_metrics
   rules:
   # Error metrics

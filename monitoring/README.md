@@ -16,6 +16,8 @@ chmod +x $DOCKER_CONFIG/cli-plugins/docker-compose
 docker compose version
 ```
 
+add `.env` file with HUGGING_FACE_HUB_TOKEN 
+
 ```
 docker compose up -d
 docker compose ps
