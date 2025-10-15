@@ -1,0 +1,23 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: vllm-cluster
+  region: us-east-1
+  version: "1.34"
+
+managedNodeGroups:
+  - name: gpu-nodegroup
+    instanceType: g5.xlarge
+    desiredCapacity: 0
+    minSize: 0
+    maxSize: 1
+    taints:
+      - key: "nvidia.com/gpu"
+        value: "true"
+        effect: "NoSchedule"
+  - name: monitoring-nodegroup
+    instanceType: t3.medium
+    desiredCapacity: 0
+    minSize: 0
+    maxSize: 1

@@ -1,0 +1,106 @@
+Prereqs:
+- AWS CLI
+- eksctl
+- kubectl
+
+### Use eksctl to create the cluster
+```sh
+$ eksctl create cluster -f cluster.yml
+```
+
+Scale the nodegroups to 1
+``
+eksctl scale nodegroup --cluster vllm-cluster --name gpu-nodegroup --nodes 1
+eksctl scale nodegroup --cluster vllm-cluster --name monitoring-nodegroup --nodes 1
+```
+
+2. Install the NVIDIA device plugin? mihgt not be needed with eksctl, see docs
+```
+$ kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.15.1/nvidia-device-plugin.yml
+```
+
+```
+helm repo add nvdp https://nvidia.github.io/k8s-device-plugin
+helm install --generate-name nvdp/nvidia-device-plugin
+```
+
+Create the Hugging Face secret
+```
+kubectl create secret generic huggingface-secret --from-literal=hf_token='YOUR_HUGGING_FACE_TOKEN'
+```
+
+Apply manifests:
+```
+kubectl apply -f deployment.yaml
+# check status
+kubectl get pods -w
+kubectl logs -f <your-pod-name>
+
+kubectl apply -f service.yaml
+# check status
+kubectl get service vllm-service
+```
+
+Verify
+```
+# Check pod status (it will be 'ContainerCreating' then 'Running')
+kubectl get pods -w
+
+# Check the logs of the pod to see download progress and server startup
+kubectl logs -f <your-pod-name>
+```
+
+Get external URL
+```
+kubectl get service vllm-service
+```
+
+test:
+```
+curl <external-url>/v1/completions \
+    -H "Content-Type: application/json" \
+    -d '{
+    "prompt": "What is deep learning?",
+    "max_tokens": 100,
+    "temperature": 0.7
+    }'
+```
+
+
+Scale to 0 to save money!
+```
+eksctl scale nodegroup --cluster vllm-cluster --name gpu-nodegroup --nodes 0 --region us-east-1
+```
+
+Scale back to 1:
+```
+
+# verify that it's up
+kubectl get nodes -w
+```
+
+
+Note, with g5.xlarge, went up to about 70 RPS.A
+
+
+
+## adding monitoring
+
+https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack
+```sh
+# add the repo
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+
+helm install prometheus prometheus-community/kube-prometheus-stack --namespace monitoring --create-namespace
+
+
+helm repo add gpu-helm-charts https://nvidia.github.io/dcgm-exporter/helm-charts
+helm repo update
+helm install dcgm-exporter gpu-helm-charts/dcgm-exporter -n monitoring
+
+kubectl apply -f deployment.yaml
+kubectl port-forward svc/prometheus-grafana 3000:80 -n monitoring
+
+
+```

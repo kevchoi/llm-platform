@@ -17,4 +17,4 @@ class VLLMUser(HttpUser):
             json=payload,
             headers={"Content-Type": "application/json"}
         )
-        # print(response.json())
+        print(response.json())
