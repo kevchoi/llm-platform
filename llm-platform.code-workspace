@@ -1,16 +1,7 @@
 {
 	"folders": [
 		{
-			"path": "tgi"
-		},
-		{
-			"path": "old"
-		},
-		{
 			"path": "."
-		},
-		{
-			"path": "load-test"
 		}
 	],
 	"settings": {}
