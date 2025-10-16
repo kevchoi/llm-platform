@@ -1,0 +1,14 @@
+# Provisioning an EKS cluster (AWS)
+
+https://developer.hashicorp.com/terraform/tutorials/kubernetes/eks
+
+## Prerequisites
+
+- Terraform
+- AWS CLI
+- kubectl
+
+
+
+
+https://developer.hashicorp.com/terraform/tutorials/kubernetes/helm-provider
