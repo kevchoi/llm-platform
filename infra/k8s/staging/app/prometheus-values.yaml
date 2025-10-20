@@ -1,0 +1,8 @@
+prometheus:
+  prometheusSpec:
+    nodeSelector:
+      eks.amazonaws.com/nodegroup: monitoring-nodegroup
+
+grafana:
+  nodeSelector:
+    eks.amazonaws.com/nodegroup: monitoring-nodegroup

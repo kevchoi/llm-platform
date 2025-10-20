@@ -8,7 +8,90 @@ https://developer.hashicorp.com/terraform/tutorials/kubernetes/eks
 - AWS CLI
 - kubectl
 
+## Configuration
 
+This project uses an S3 bucket to store the Terraform state remotely, which is a recommended practice for collaboration and state management.
 
+1.  **Create an S3 bucket for Terraform state:**
+    You need an S3 bucket to store the `terraform.tfstate` file. Replace `your-terraform-state-bucket` with a unique name for your S3 bucket.
 
-https://developer.hashicorp.com/terraform/tutorials/kubernetes/helm-provider
+    ```sh
+    aws s3api create-bucket --bucket your-terraform-state-bucket --region us-east-1
+    ```
+
+    It is recommended to enable versioning and encryption on this bucket to protect your Terraform state.
+
+2.  **Update backend configuration:**
+    In the `infra/terraform/environments/staging/backend.tfvars` file, update the bucket name with the one you just created.
+
+    ```terraform:infra/terraform/environments/staging/backend.tfvars
+    bucket = "your-terraform-state-bucket"
+    ```
+
+## Deployment
+
+The following commands should be run from the `staging` environment directory.
+
+1.  **Navigate to the staging directory:**
+    ```sh
+    cd infra/terraform/environments/staging
+    ```
+
+2.  **Initialize Terraform:**
+    This command initializes Terraform and configures the S3 backend.
+    ```sh
+    terraform init -backend-config=backend.tfvars
+    ```
+
+3.  **Plan the deployment:**
+    This command shows you what resources will be created.
+    ```sh
+    terraform plan
+    ```
+
+4.  **Apply the configuration:**
+    This command will create the AWS resources.
+    ```sh
+    terraform apply
+    ```
+
+## Post-deployment
+
+Once the EKS cluster is created, you need to configure `kubectl` to connect to it.
+
+1.  **Update your kubeconfig:**
+    You can get the cluster name from the Terraform output. Then run the following AWS CLI command:
+    ```sh
+    aws eks update-kubeconfig --name llm-staging --region us-east-1
+    ```
+
+2.  **Verify connection:**
+    ```sh
+    kubectl get nodes
+    ```
+
+## Accessing ArgoCD
+
+ArgoCD is installed via a Helm chart as part of the EKS module. It is a declarative, GitOps continuous delivery tool for Kubernetes.
+
+1.  **Access the ArgoCD UI:**
+    The ArgoCD API server is not exposed to the internet by default. You can access it by port-forwarding the service to your local machine.
+
+    ```sh
+    kubectl port-forward svc/argocd-server -n argocd 8080:443
+    ```
+    You can then access the UI by navigating to `https://localhost:8080` in your web browser.
+
+2.  **Log in to ArgoCD:**
+    The default username for ArgoCD is `admin`. The initial password is automatically generated and stored in a Kubernetes secret. You can retrieve it with the following command:
+
+    ```sh
+    kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+    ```
+    You can use this password to log in to the UI. It is recommended to change this password after your first login.
+
+## Security Considerations
+
+-   **EKS Public Endpoint**: The EKS cluster is configured with a public API endpoint (`endpoint_public_access = true` in `infra/terraform/modules/eks/main.tf`). For a production environment, you should consider setting this to `false` and accessing the cluster via a bastion host or VPN for enhanced security.
+
+-   **Cluster Creator Admin Permissions**: The `enable_cluster_creator_admin_permissions` flag is set to `true`. This gives the IAM user/role that creates the cluster `system:masters` permissions in Kubernetes RBAC. While convenient for initial setup, for production it is better to manage access control through Kubernetes RBAC roles and bindings explicitly.
