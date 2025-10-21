@@ -2,7 +2,10 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: vllm-deployment
+  labels:
+    app: vllm
 spec:
+  replicas: 1
   selector:
     matchLabels:
       app: vllm
@@ -16,7 +19,7 @@ spec:
     spec:
       tolerations:
         - key: "nvidia.com/gpu"
-          value: "true"
+          operator: "Exists"
           effect: "NoSchedule"
       containers:
       - name: vllm-container
@@ -34,14 +37,34 @@ spec:
           limits:
             nvidia.com/gpu: 1
         ports:
-        - containerPort: 8000
+        - name: http
+          containerPort: 8000
+          protocol: TCP
         readinessProbe:
           httpGet:
             path: /health
-            port: 8000
+            port: http
           initialDelaySeconds: 300
+          periodSeconds: 10
         livenessProbe:
           httpGet:
             path: /health
-            port: 8000
+            port: http
           initialDelaySeconds: 300
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-service
+  labels:
+    app: vllm
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8000
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    app: vllm

@@ -55,6 +55,22 @@ The following commands should be run from the `staging` environment directory.
     terraform apply
     ```
 
+    **Note on ArgoCD Application:**
+
+    The deployment includes an ArgoCD application managed via a `kubernetes_manifest` resource in Terraform. This resource requires API access to the Kubernetes cluster during `terraform plan`, which means the cluster must be running before this resource can be applied.
+
+    Because of this, the initial deployment requires two `terraform apply` steps:
+
+    1.  **First `apply`:** In `infra/terraform/environments/staging/main.tf`, comment out the `kubernetes_manifest` resource for the `argocd_app`.
+        ```hcl
+        # resource "kubernetes_manifest" "argocd_app" {
+        #   ...
+        # }
+        ```
+        Then run `terraform apply`. This will provision the EKS cluster and all other resources.
+
+    2.  **Second `apply`:** Uncomment the `kubernetes_manifest.argocd_app` resource and run `terraform apply` again. This will deploy the ArgoCD application into the now-running cluster.
+
 ## Post-deployment
 
 Once the EKS cluster is created, you need to configure `kubectl` to connect to it.
@@ -90,8 +106,32 @@ ArgoCD is installed via a Helm chart as part of the EKS module. It is a declarat
     ```
     You can use this password to log in to the UI. It is recommended to change this password after your first login.
 
+## Monitoring with Prometheus and Grafana
+
+The `kube-prometheus-stack` is deployed as an ArgoCD application to provide monitoring capabilities for the Kubernetes cluster. This stack includes Prometheus for collecting metrics and Grafana for visualizing them.
+
+1.  **Access the Prometheus UI:**
+    The Prometheus server is not exposed publicly. Use `port-forward` to access it.
+
+    ```sh
+    kubectl port-forward svc/kube-prometheus-stack-prometheus -n monitoring 9090:9090
+    ```
+    You can then access the UI by navigating to `http://localhost:9090` in your web browser.
+
+2.  **Access the Grafana UI:**
+    Grafana is also not exposed publicly. Use `port-forward` to access it.
+
+    ```sh
+    kubectl port-forward svc/kube-prometheus-stack-grafana -n monitoring 3000:80
+    ```
+    You can then access the UI by navigating to `http://localhost:3000` in your web browser. The default credentials are `admin` / `prom-operator`.
+
+## NVIDIA GPU Operator
+
+The NVIDIA GPU Operator is installed as an ArgoCD application, which is required to provision and manage GPU resources on the EKS cluster.
+
 ## Security Considerations
 
--   **EKS Public Endpoint**: The EKS cluster is configured with a public API endpoint (`endpoint_public_access = true` in `infra/terraform/modules/eks/main.tf`). For a production environment, you should consider setting this to `false` and accessing the cluster via a bastion host or VPN for enhanced security.
+-   **EKS Public Endpoint**: The EKS cluster is configured with a public API endpoint (`endpoint_public_access = true` in `infra/terraform/environments/staging/main.tf`). For a production environment, you should consider setting this to `false` and accessing the cluster via a bastion host or VPN for enhanced security.
 
 -   **Cluster Creator Admin Permissions**: The `enable_cluster_creator_admin_permissions` flag is set to `true`. This gives the IAM user/role that creates the cluster `system:masters` permissions in Kubernetes RBAC. While convenient for initial setup, for production it is better to manage access control through Kubernetes RBAC roles and bindings explicitly.

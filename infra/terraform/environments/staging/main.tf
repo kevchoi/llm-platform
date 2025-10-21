@@ -60,6 +60,17 @@ module "eks" {
   name               = local.cluster_name
   kubernetes_version = "1.34"
 
+  addons = {
+    coredns                = {}
+    eks-pod-identity-agent = {
+      before_compute = true
+    }
+    kube-proxy             = {}
+    vpc-cni                = {
+      before_compute = true
+    }
+  }
+
   endpoint_public_access                   = true
   enable_cluster_creator_admin_permissions = true
 
@@ -67,39 +78,63 @@ module "eks" {
   subnet_ids = module.vpc.private_subnets
 
   eks_managed_node_groups = {
-    main = {
-      name           = "${local.cluster_name}-main"
-      instance_types = ["t3.micro"]
+    # General purpose node group for system components (ArgoCD) and monitoring
+    default = {
+      name           = "${local.cluster_name}-default"
+      instance_types = ["t3.medium"]
       min_size       = 2
       max_size       = 2
       desired_size   = 2
+
+      labels = {
+        "purpose" = "default"
+      }
+    }
+
+    # GPU node group for LLM workloads
+    gpu = {
+      name           = "${local.cluster_name}-gpu"
+      instance_types = ["g5.xlarge"]
+      min_size       = 1
+      max_size       = 1
+      desired_size   = 1
+
+      taints = {
+        gpu = {
+          key    = "nvidia.com/gpu"
+          value  = "true"
+          effect = "NO_SCHEDULE"
+        }
+      }
+
+      labels = {
+        "purpose" = "gpu"
+      }
     }
   }
 }
 
+data "aws_eks_cluster" "cluster" {
+  name = module.eks.cluster_name
+}
+
+data "aws_eks_cluster_auth" "cluster" {
+  name = module.eks.cluster_name
+}
+
 # Kubernetes Provider Configuration
 provider "kubernetes" {
-  host                   = module.eks.cluster_endpoint
-  cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
-
-  exec {
-    api_version = "client.authentication.k8s.io/v1beta1"
-    command     = "aws"
-    args        = ["eks", "get-token", "--cluster-name", module.eks.cluster_name]
-  }
+  host                   = data.aws_eks_cluster.cluster.endpoint
+  cluster_ca_certificate = base64decode(data.aws_eks_cluster.cluster.certificate_authority[0].data)
+  token                  = data.aws_eks_cluster_auth.cluster.token
 }
 
 # Helm Provider Configuration
 provider "helm" {
   kubernetes = {
-    host                   = module.eks.cluster_endpoint
-    cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
-
-    exec = {
-      api_version = "client.authentication.k8s.io/v1beta1"
-      command     = "aws"
-      args        = ["eks", "get-token", "--cluster-name", module.eks.cluster_name]
-    }
+    host                   = data.aws_eks_cluster.cluster.endpoint
+    cluster_ca_certificate = base64decode(data.aws_eks_cluster.cluster.certificate_authority[0].data)
+    token                  = data.aws_eks_cluster_auth.cluster.token
   }
 }
 
@@ -108,6 +143,8 @@ resource "kubernetes_namespace" "argocd" {
   metadata {
     name = "argocd"
   }
+
+  depends_on = [module.eks]
 }
 
 # ArgoCD Installation
@@ -118,38 +155,38 @@ resource "helm_release" "argocd" {
   version    = "9.0.3"
   namespace  = kubernetes_namespace.argocd.metadata[0].name
 
-  depends_on = [module.eks]
+  depends_on = [module.eks, kubernetes_namespace.argocd]
 }
 
-# ArgoCD Application
-# resource "kubectl_manifest" "argocd_app" {
-#   yaml_body = {
-#     apiVersion = "argoproj.io/v1alpha1"
-#     kind       = "Application"
-#     metadata = {
-#       name      = "llm-${local.env}"
-#       namespace = "argocd"
-#     }
-#     spec = {
-#       project = "default"
-#       source = {
-#         repoURL        = "https://github.com/kevchoi/llm-platform.git"
-#         targetRevision = "HEAD"
-#         path           = "infra/k8s/${local.env}/app"
-#       }
-#       destination = {
-#         server    = "https://kubernetes.default.svc"
-#         namespace = "default"
-#       }
-#       syncPolicy = {
-#         automated = {
-#           prune    = true
-#           selfHeal = true
-#         }
-#         syncOptions = ["CreateNamespace=true"]
-#       }
-#     }
-#   }
+# ArgoCD Application - Needs to be commented out during initial `terraform apply`
+resource "kubernetes_manifest" "argocd_app" {
+  manifest = {
+    apiVersion = "argoproj.io/v1alpha1"
+    kind       = "Application"
+    metadata = {
+      name      = local.cluster_name
+      namespace = kubernetes_namespace.argocd.metadata[0].name
+    }
+    spec = {
+      project = "default"
+      source = {
+        repoURL        = "https://github.com/kevchoi/llm-platform.git"
+        targetRevision = "HEAD"
+        path           = "infra/k8s/${local.env}/apps"
+      }
+      destination = {
+        server    = "https://kubernetes.default.svc"
+        namespace = kubernetes_namespace.argocd.metadata[0].name
+      }
+      syncPolicy = {
+        automated = {
+          prune    = true
+          selfHeal = true
+        }
+        syncOptions = ["CreateNamespace=true"]
+      }
+    }
+  }
 
-#   depends_on = [helm_release.argocd]
-# }
+  depends_on = [helm_release.argocd]
+}
