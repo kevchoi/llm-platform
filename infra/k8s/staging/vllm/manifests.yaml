@@ -1,10 +1,8 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: vllm-deployment
-  namespace: vllm-staging 
-  labels:
-    app: vllm
+  name: vllm
+  namespace: vllm-staging
 spec:
   replicas: 1
   selector:
@@ -14,21 +12,12 @@ spec:
     metadata:
       labels:
         app: vllm
-      annotations:
-        prometheus.io/scrape: 'true'
-        prometheus.io/port: '8000'
     spec:
-      tolerations:
-        - key: "nvidia.com/gpu"
-          operator: "Equal"
-          value: "true"
-          effect: "NoSchedule"
       containers:
-      - name: vllm-container
+      - name: vllm
         image: vllm/vllm-openai:latest
         args:
-        - "--model"
-        - "meta-llama/Llama-3.2-1B"
+        - "--model=meta-llama/Llama-3.2-1B"
         env:
         - name: HF_TOKEN
           valueFrom:
@@ -39,35 +28,35 @@ spec:
           limits:
             nvidia.com/gpu: 1
         ports:
-        - name: http
-          containerPort: 8000
-          protocol: TCP
+        - containerPort: 8000
+          name: http
         readinessProbe:
           httpGet:
             path: /health
-            port: http
-          initialDelaySeconds: 300
+            port: 8000
+          initialDelaySeconds: 30
           periodSeconds: 10
+          timeoutSeconds: 5
         livenessProbe:
           httpGet:
             path: /health
-            port: http
-          initialDelaySeconds: 300
-          periodSeconds: 10
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 5
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: vllm-service
+  name: vllm
   namespace: vllm-staging
-  labels:
-    app: vllm
 spec:
-  type: ClusterIP
-  ports:
-    - port: 8000
-      targetPort: http
-      protocol: TCP
-      name: http
   selector:
     app: vllm
+  ports:
+  - port: 8000
+    targetPort: 8000

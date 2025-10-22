@@ -28,7 +28,7 @@ helm install --generate-name nvdp/nvidia-device-plugin
 
 Create the Hugging Face secret
 ```
-kubectl create secret generic huggingface-secret --from-literal=hf_token='YOUR_HUGGING_FACE_TOKEN'
+kubectl create secret generic huggingface-secret --from-literal=hf_token='YOUR_HUGGING_FACE_TOKEN' --namespace=vllm-staging
 ```
 
 Apply manifests:
