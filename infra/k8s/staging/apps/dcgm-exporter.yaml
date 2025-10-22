@@ -9,6 +9,15 @@ spec:
     repoURL: https://nvidia.github.io/dcgm-exporter/helm-charts
     chart: dcgm-exporter
     targetRevision: 4.6.0
+    helm:
+      values: |
+        nodeSelector:
+          nvidia.com/gpu: "true"
+        tolerations:
+        - key: "nvidia.com/gpu"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
   destination:
     server: https://kubernetes.default.svc
     namespace: monitoring

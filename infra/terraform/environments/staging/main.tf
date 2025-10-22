@@ -143,6 +143,11 @@ module "eks" {
         }
       }
 
+      labels = {
+        "nvidia.com/gpu" = "true"
+        "purpose"        = "gpu"
+      }
+
       taints = {
         "nvidia.com/gpu" = {
           key    = "nvidia.com/gpu"
