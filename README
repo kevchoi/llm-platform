@@ -1,0 +1,13 @@
+# LLM Platform
+
+## Setup
+
+### Kubernetes Secrets
+
+To deploy services that require a Hugging Face token, you'll need to create a Kubernetes secret in the cluster.
+
+Run the following command, replacing `'your-hugging-face-token'` with your actual token:
+
+```bash
+kubectl create secret generic huggingface-secret --from-literal=hf_token='your-hugging-face-token'
+```

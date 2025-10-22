@@ -97,7 +97,7 @@ module "eks" {
     }
     aws-ebs-csi-driver = {
       pod_identity_association = [{
-        role_arn = aws_iam_role.ebs_csi_driver_role.arn
+        role_arn        = aws_iam_role.ebs_csi_driver_role.arn
         service_account = "ebs-csi-controller-sa"
       }]
     }
@@ -123,24 +123,22 @@ module "eks" {
       }
     }
 
-    # GPU node group for LLM workloads
     gpu = {
       name           = "${local.cluster_name}-gpu"
       instance_types = ["g5.xlarge"]
+      ami_type       = "AL2023_x86_64_NVIDIA"
       min_size       = 1
       max_size       = 1
       desired_size   = 1
 
+      enable_efa_support = true
+
       taints = {
-        gpu = {
+        "nvidia.com/gpu" = {
           key    = "nvidia.com/gpu"
           value  = "true"
           effect = "NO_SCHEDULE"
         }
-      }
-
-      labels = {
-        "purpose" = "gpu"
       }
     }
   }
