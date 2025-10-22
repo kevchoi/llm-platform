@@ -18,6 +18,8 @@ spec:
         dcgmExporter:
           serviceMonitor:
             enabled: true
+            additionalLabels:
+              release: kube-prometheus-stack
   destination:
     server: https://kubernetes.default.svc
     namespace: gpu-operator
