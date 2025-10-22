@@ -130,7 +130,6 @@ module "eks" {
       min_size       = 1
       max_size       = 1
       desired_size   = 1
-      disk_size      = 100
 
       # enable_efa_support = true # Not supported for xlarge instances
       block_device_mappings = {

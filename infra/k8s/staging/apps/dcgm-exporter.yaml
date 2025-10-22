@@ -18,6 +18,22 @@ spec:
           operator: "Equal"
           value: "true"
           effect: "NoSchedule"
+        serviceMonitor:
+          enabled: true
+        hostPID: true
+        hostNetwork: true
+        securityContext:
+          privileged: true
+        extraHostVolumes:
+        - name: nvidia-toolkit
+          hostPath: /usr/local/nvidia/toolkit
+        extraVolumeMounts:
+        - name: nvidia-toolkit
+          mountPath: /usr/local/nvidia/toolkit
+          readOnly: true
+        env:
+        - name: LD_LIBRARY_PATH
+          value: "/usr/local/nvidia/toolkit:$(LD_LIBRARY_PATH)"
   destination:
     server: https://kubernetes.default.svc
     namespace: monitoring
