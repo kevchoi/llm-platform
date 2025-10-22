@@ -17,6 +17,10 @@ spec:
         prometheus.io/scrape: 'true'
         prometheus.io/port: '8000'
     spec:
+      persistence:
+        enabled: true
+        size: 128Gi
+        mountPath: /root/.cache/huggingface/
       tolerations:
         - key: "nvidia.com/gpu"
           operator: "Exists"

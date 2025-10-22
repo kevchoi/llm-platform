@@ -52,6 +52,32 @@ module "vpc" {
   }
 }
 
+data "aws_iam_policy_document" "assume_role" {
+  statement {
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["pods.eks.amazonaws.com"]
+    }
+
+    actions = [
+      "sts:AssumeRole",
+      "sts:TagSession"
+    ]
+  }
+}
+
+resource "aws_iam_role" "ebs_csi_driver_role" {
+  name               = "${local.cluster_name}-ebs-csi-driver-role"
+  assume_role_policy = data.aws_iam_policy_document.assume_role.json
+}
+
+resource "aws_iam_role_policy_attachment" "ebs_csi_driver_policy" {
+  role       = aws_iam_role.ebs_csi_driver_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+}
+
 # EKS cluster configuration
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
@@ -61,13 +87,19 @@ module "eks" {
   kubernetes_version = "1.34"
 
   addons = {
-    coredns                = {}
+    coredns = {}
     eks-pod-identity-agent = {
       before_compute = true
     }
-    kube-proxy             = {}
-    vpc-cni                = {
+    kube-proxy = {}
+    vpc-cni = {
       before_compute = true
+    }
+    aws-ebs-csi-driver = {
+      pod_identity_association = [{
+        role_arn = aws_iam_role.ebs_csi_driver_role.arn
+        service_account = "ebs-csi-controller-sa"
+      }]
     }
   }
 
@@ -81,7 +113,7 @@ module "eks" {
     # General purpose node group for system components (ArgoCD) and monitoring
     default = {
       name           = "${local.cluster_name}-default"
-      instance_types = ["t3.medium"]
+      instance_types = ["t3.large"]
       min_size       = 2
       max_size       = 2
       desired_size   = 2
