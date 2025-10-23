@@ -55,6 +55,7 @@ metadata:
   name: vllm-service
   namespace: vllm-staging
 spec:
+  type: LoadBalancer
   selector:
     app: vllm
   ports:
