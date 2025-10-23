@@ -114,22 +114,24 @@ module "eks" {
     default = {
       name           = "${local.cluster_name}-default"
       instance_types = ["t3.large"]
-      min_size       = 2
-      max_size       = 2
-      desired_size   = 2
+      min_size       = 0
+      max_size       = 1
+      desired_size   = 0
 
       labels = {
         "purpose" = "default"
       }
+
+      capacity_type = "SPOT"
     }
 
     gpu = {
       name           = "${local.cluster_name}-gpu"
       instance_types = ["g5.xlarge"]
       ami_type       = "AL2023_x86_64_NVIDIA"
-      min_size       = 1
+      min_size       = 0
       max_size       = 1
-      desired_size   = 1
+      desired_size   = 0
 
       # enable_efa_support = true # Not supported for xlarge instances
       block_device_mappings = {
@@ -154,6 +156,8 @@ module "eks" {
           effect = "NO_SCHEDULE"
         }
       }
+
+      capacity_type = "SPOT"
     }
   }
 }

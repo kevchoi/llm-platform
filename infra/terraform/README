@@ -135,3 +135,19 @@ The NVIDIA GPU Operator is installed as an ArgoCD application, which is required
 -   **EKS Public Endpoint**: The EKS cluster is configured with a public API endpoint (`endpoint_public_access = true` in `infra/terraform/environments/staging/main.tf`). For a production environment, you should consider setting this to `false` and accessing the cluster via a bastion host or VPN for enhanced security.
 
 -   **Cluster Creator Admin Permissions**: The `enable_cluster_creator_admin_permissions` flag is set to `true`. This gives the IAM user/role that creates the cluster `system:masters` permissions in Kubernetes RBAC. While convenient for initial setup, for production it is better to manage access control through Kubernetes RBAC roles and bindings explicitly.
+
+### Scaling the cluster up and down
+
+To scale the cluster up (e.g., to run inference):
+
+```bash
+aws eks update-nodegroup-config --cluster-name llm-staging --nodegroup-name llm-staging-default --scaling-config desiredSize=1 && \
+aws eks update-nodegroup-config --cluster-name llm-staging --nodegroup-name llm-staging-gpu --scaling-config desiredSize=1
+```
+
+To scale the cluster down to 0 to save costs:
+
+```bash
+aws eks update-nodegroup-config --cluster-name llm-staging --nodegroup-name llm-staging-default --scaling-config desiredSize=0 && \
+aws eks update-nodegroup-config --cluster-name llm-staging --nodegroup-name llm-staging-gpu --scaling-config desiredSize=0
+```
