@@ -1,0 +1,84 @@
+apiVersion: ray.io/v1
+kind: RayService
+metadata:
+  name: ray-serve-llm
+spec:
+  serveConfigV2: |
+    applications:
+    - name: llm
+      import_path: ray.serve.llm:build_openai_app
+      route_prefix: "/" # Note that "/" should be the default route prefix
+      args:
+        llm_configs:
+        - model_loading_config:
+            model_id: Llama-3.2-1B
+            model_source: meta-llama/Llama-3.2-1B
+          engine_kwargs: # vLLM engine kwargs
+            # pipeline_parallel_size: 2
+            # dtype: bfloat16
+          deployment_config:
+            autoscaling_config:
+              min_replicas: 0
+              max_replicas: 1
+              target_ongoing_requests: 64
+            max_ongoing_requests: 128
+  rayClusterConfig:
+    rayVersion: "2.50.1"
+    headGroupSpec:
+      rayStartParams:
+        num-cpus: "0"
+        num-gpus: "0"
+      template:
+        spec:
+          containers:
+          - name: ray-head
+            image: rayproject/ray-llm:2.50.1-py311-cu128
+            ports:
+            - containerPort: 8000
+              name: serve
+              protocol: TCP
+            - containerPort: 8080
+              name: metrics
+              protocol: TCP
+            - containerPort: 6379
+              name: gcs
+              protocol: TCP
+            - containerPort: 8265
+              name: dashboard
+              protocol: TCP
+            - containerPort: 10001
+              name: client
+              protocol: TCP
+            resources:
+              limits:
+                cpu: 2
+                memory: 4Gi
+              requests:
+                cpu: 2
+                memory: 4Gi
+    workerGroupSpecs:
+    - replicas: 1
+      numOfHosts: 1
+      groupName: gpu-group
+      rayStartParams:
+        num-gpus: "1"
+      template:
+        spec:
+          containers:
+          - name: ray-worker
+            image: rayproject/ray-llm:2.50.1-py311-cu128
+            env:
+            - name: HUGGING_FACE_HUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-token
+                  key: hf_token
+            resources:
+              limits:
+                cpu: 4
+                memory: 16Gi
+                nvidia.com/gpu: "1"
+              requests:
+                cpu: 4
+                memory: 16Gi
+                nvidia.com/gpu: "1"

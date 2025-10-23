@@ -114,9 +114,9 @@ module "eks" {
     default = {
       name           = "${local.cluster_name}-default"
       instance_types = ["t3.large"]
-      min_size       = 0
-      max_size       = 1
-      desired_size   = 0
+      min_size       = 1
+      max_size       = 2
+      desired_size   = 1
 
       labels = {
         "purpose" = "default"
@@ -127,13 +127,16 @@ module "eks" {
 
     gpu = {
       name           = "${local.cluster_name}-gpu"
-      instance_types = ["g5.xlarge"]
+      instance_types = ["g5.xlarge"] # Use 8xlarge for EFA
       ami_type       = "AL2023_x86_64_NVIDIA"
-      min_size       = 0
-      max_size       = 1
-      desired_size   = 0
+      min_size       = 1
+      max_size       = 2
+      desired_size   = 1
 
-      # enable_efa_support = true # Not supported for xlarge instances
+      # Restrict GPU nodes to a single AZ for EFA support?
+      # subnet_ids     = [module.vpc.private_subnets[0]]
+      # enable_efa_support = true # Note, not supported for xlarge instances (but 8xlarge is supported)
+
       block_device_mappings = {
         xvda = {
           device_name = "/dev/xvda"
@@ -145,6 +148,7 @@ module "eks" {
       }
 
       labels = {
+        "vpc.amazonaws.com/efa.present" = "true"
         "nvidia.com/gpu" = "true"
         "purpose"        = "gpu"
       }
