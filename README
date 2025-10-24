@@ -11,3 +11,4 @@ Run the following command, replacing `'your-hugging-face-token'` with your actua
 ```bash
 kubectl create secret generic huggingface-secret --from-literal=hf_token='YOUR_HUGGING_FACE_TOKEN' --namespace=vllm-staging
 ```
+NG

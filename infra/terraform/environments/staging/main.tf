@@ -118,6 +118,16 @@ module "eks" {
       max_size       = 2
       desired_size   = 1
 
+      block_device_mappings = {
+        xvda = {
+          device_name = "/dev/xvda"
+          ebs = {
+            volume_size = 64
+            volume_type = "gp3"
+          }
+        }
+      }
+
       labels = {
         "purpose" = "default"
       }

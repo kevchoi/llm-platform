@@ -13,7 +13,7 @@ spec:
         - model_loading_config:
             model_id: Llama-3.2-1B
             model_source: meta-llama/Llama-3.2-1B
-          engine_kwargs: # vLLM engine kwargs
+          # engine_kwargs: # vLLM engine kwargs
             # pipeline_parallel_size: 2
             # dtype: bfloat16
           deployment_config:
@@ -50,12 +50,9 @@ spec:
               name: client
               protocol: TCP
             resources:
-              limits:
-                cpu: 2
-                memory: 4Gi
               requests:
-                cpu: 2
-                memory: 4Gi
+                cpu: 1
+                memory: 2Gi
     workerGroupSpecs:
     - replicas: 1
       numOfHosts: 1
@@ -64,21 +61,26 @@ spec:
         num-gpus: "1"
       template:
         spec:
+          tolerations:
+          - key: nvidia.com/gpu
+            operator: Equal
+            value: "true"
+            effect: NoSchedule
           containers:
           - name: ray-worker
             image: rayproject/ray-llm:2.50.1-py311-cu128
             env:
-            - name: HUGGING_FACE_HUB_TOKEN
+            - name: HF_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: hf-token
                   key: hf_token
             resources:
-              limits:
-                cpu: 4
-                memory: 16Gi
-                nvidia.com/gpu: "1"
               requests:
-                cpu: 4
-                memory: 16Gi
+                cpu: 2
+                memory: 8Gi
+                nvidia.com/gpu: "1"
+              limits:
+                cpu: 2
+                memory: 8Gi
                 nvidia.com/gpu: "1"
