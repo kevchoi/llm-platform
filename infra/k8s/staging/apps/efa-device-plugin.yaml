@@ -8,7 +8,7 @@ spec:
   source:
     repoURL: https://aws.github.io/eks-charts
     chart: aws-efa-k8s-device-plugin
-    targetRevision: v0.5.18
+    targetRevision: v0.5.19
     helm:
       values: |
         nodeSelector:
