@@ -113,10 +113,10 @@ module "eks" {
     # General purpose node group for system components (ArgoCD) and monitoring
     default = {
       name           = "${local.cluster_name}-default"
-      instance_types = ["t3.large"]
+      instance_types = ["t3.2xlarge"]
       min_size       = 0
-      max_size       = 2
-      desired_size   = 2
+      max_size       = 1
+      desired_size   = 1
 
       block_device_mappings = {
         xvda = {

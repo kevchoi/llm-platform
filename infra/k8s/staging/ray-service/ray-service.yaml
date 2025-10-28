@@ -7,20 +7,25 @@ spec:
     applications:
     - name: llm
       import_path: ray.serve.llm:build_openai_app
-      route_prefix: "/" # Note that "/" should be the default route prefix
+      route_prefix: "/"
       args:
         llm_configs:
         - model_loading_config:
-            model_id: Qwen3-32B-FP8
-            model_source: Qwen/Qwen3-32B-FP8
-          engine_kwargs: # vLLM engine kwargs
-            pipeline_parallel_size: 2
+            model_id: Qwen/Qwen3-32B-AWQ
+            model_source: Qwen/Qwen3-32B-AWQ
           deployment_config:
             autoscaling_config:
               min_replicas: 1
               max_replicas: 1
               target_ongoing_requests: 64
             max_ongoing_requests: 128
+          engine_kwargs:
+            distributed_executor_backend: "ray"
+            tensor_parallel_size: 1
+            pipeline_parallel_size: 2
+            gpu_memory_utilization: 0.9
+            quantization: awq
+            max_model_len: 4096
   rayClusterConfig:
     rayVersion: "2.50.1"
     headGroupSpec:
@@ -50,8 +55,8 @@ spec:
               protocol: TCP
             resources:
               requests:
-                cpu: 1
-                memory: 2Gi
+                cpu: 2
+                memory: 16Gi
     workerGroupSpecs:
     - replicas: 2
       minReplicas: 2
@@ -78,9 +83,9 @@ spec:
             resources:
               requests:
                 cpu: 28
-                memory: 112Gi
+                memory: 100Gi
                 nvidia.com/gpu: "1"
               limits:
                 cpu: 28
-                memory: 112Gi
+                memory: 100Gi
                 nvidia.com/gpu: "1"
