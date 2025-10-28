@@ -11,11 +11,15 @@ spec:
       args:
         llm_configs:
         - model_loading_config:
-            model_id: Llama-3.2-1B
-            model_source: meta-llama/Llama-3.2-1B
-          # engine_kwargs: # vLLM engine kwargs
-            # pipeline_parallel_size: 2
-            # dtype: bfloat16
+            model_id: Llama-3.1-70B-Instruct
+            model_source: meta-llama/Meta-Llama-3.1-70B-Instruct
+            hf_model_id: meta-llama/Meta-Llama-3.1-70B-Instruct
+          engine_kwargs: # vLLM engine kwargs
+            pipeline_parallel_size: 2
+            quantization: "bitsandbytes"
+            load_format: "bitsandbytes"
+            enable_prefix_caching: true
+            gpu_memory_utilization: 0.9
           deployment_config:
             autoscaling_config:
               min_replicas: 0
@@ -55,7 +59,7 @@ spec:
                 memory: 2Gi
     workerGroupSpecs:
     - replicas: 1
-      numOfHosts: 1
+      numOfHosts: 2
       groupName: gpu-group
       rayStartParams:
         num-gpus: "1"
@@ -77,10 +81,10 @@ spec:
                   key: hf_token
             resources:
               requests:
-                cpu: 2
-                memory: 8Gi
+                cpu: 28
+                memory: 112Gi
                 nvidia.com/gpu: "1"
               limits:
-                cpu: 2
-                memory: 8Gi
+                cpu: 28
+                memory: 112Gi
                 nvidia.com/gpu: "1"
