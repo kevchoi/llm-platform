@@ -11,14 +11,10 @@ spec:
       args:
         llm_configs:
         - model_loading_config:
-            model_id: Llama-3.1-70B-Instruct
-            model_source: meta-llama/Meta-Llama-3.1-70B-Instruct
+            model_id: Qwen3-32B-FP8
+            model_source: Qwen/Qwen3-32B-FP8
           engine_kwargs: # vLLM engine kwargs
             pipeline_parallel_size: 2
-            quantization: "bitsandbytes"
-            load_format: "bitsandbytes"
-            enable_prefix_caching: true
-            gpu_memory_utilization: 0.9
           deployment_config:
             autoscaling_config:
               min_replicas: 0
