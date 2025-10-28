@@ -53,10 +53,9 @@ spec:
                 cpu: 1
                 memory: 2Gi
     workerGroupSpecs:
-    - replicas: 1
-      minReplicas: 1
-      maxReplicas: 1
-      numOfHosts: 2
+    - replicas: 2
+      minReplicas: 2
+      maxReplicas: 2
       groupName: gpu-group
       rayStartParams:
         num-gpus: "1"
