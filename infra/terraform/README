@@ -141,8 +141,8 @@ The NVIDIA GPU Operator is installed as an ArgoCD application, which is required
 To scale the cluster up (e.g., to run inference):
 
 ```bash
-aws eks update-nodegroup-config --cluster-name llm-staging --nodegroup-name llm-staging-default --scaling-config desiredSize=1 && \
-aws eks update-nodegroup-config --cluster-name llm-staging --nodegroup-name llm-staging-gpu --scaling-config desiredSize=1
+aws eks update-nodegroup-config --cluster-name llm-staging --nodegroup-name llm-staging-default --scaling-config desiredSize=2 && \
+aws eks update-nodegroup-config --cluster-name llm-staging --nodegroup-name llm-staging-gpu --scaling-config desiredSize=2
 ```
 
 To scale the cluster down to 0 to save costs:

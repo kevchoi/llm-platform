@@ -17,7 +17,7 @@ spec:
             pipeline_parallel_size: 2
           deployment_config:
             autoscaling_config:
-              min_replicas: 0
+              min_replicas: 1
               max_replicas: 1
               target_ongoing_requests: 64
             max_ongoing_requests: 128
@@ -54,6 +54,8 @@ spec:
                 memory: 2Gi
     workerGroupSpecs:
     - replicas: 1
+      minReplicas: 1
+      maxReplicas: 1
       numOfHosts: 2
       groupName: gpu-group
       rayStartParams:
