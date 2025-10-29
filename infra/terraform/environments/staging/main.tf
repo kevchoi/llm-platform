@@ -171,7 +171,7 @@ module "eks" {
         }
       }
 
-      capacity_type = "ON_DEMAND" # Note, EFA is not supported for SPOT instances
+      capacity_type = "ON_DEMAND"
     }
   }
 }

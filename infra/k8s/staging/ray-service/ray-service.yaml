@@ -17,20 +17,15 @@ spec:
             autoscaling_config:
               min_replicas: 1
               max_replicas: 1
-              target_ongoing_requests: 64
-            max_ongoing_requests: 128
           engine_kwargs:
-            distributed_executor_backend: "ray"
             tensor_parallel_size: 1
             pipeline_parallel_size: 2
             gpu_memory_utilization: 0.9
             quantization: awq
-            max_model_len: 4096
   rayClusterConfig:
     rayVersion: "2.50.1"
     headGroupSpec:
       rayStartParams:
-        num-cpus: "0"
         num-gpus: "0"
       template:
         spec:
@@ -40,19 +35,14 @@ spec:
             ports:
             - containerPort: 8000
               name: serve
-              protocol: TCP
             - containerPort: 8080
               name: metrics
-              protocol: TCP
             - containerPort: 6379
               name: gcs
-              protocol: TCP
             - containerPort: 8265
               name: dashboard
-              protocol: TCP
             - containerPort: 10001
               name: client
-              protocol: TCP
             resources:
               requests:
                 cpu: 2
@@ -62,8 +52,7 @@ spec:
       minReplicas: 2
       maxReplicas: 2
       groupName: gpu-group
-      rayStartParams:
-        num-gpus: "1"
+      rayStartParams: {}
       template:
         spec:
           tolerations:
@@ -75,8 +64,6 @@ spec:
           - name: ray-worker
             image: rayproject/ray-llm:2.50.1-py311-cu128
             env:
-            - name: NCCL_DEBUG
-              value: "info"
             resources:
               requests:
                 cpu: 28
