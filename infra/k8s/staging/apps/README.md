@@ -14,6 +14,17 @@ kubectl get svc -n ray-service
 
 kubectl port-forward svc/ray-serve-llm-serve-svc 8000:8000 -n ray-service
 
+
+# Minimal test - should complete in 10-30 seconds
+curl --max-time 60 'http://localhost:8000/v1/chat/completions' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "Qwen/Qwen3-32B-AWQ",
+    "messages": [{"role": "user", "content": "Say hi"}],
+    "max_tokens": 10
+  }'
+
+ # Full test - should complete in 1-2 minutes
 curl --location 'http://localhost:8000/v1/chat/completions' \
   --header 'Content-Type: application/json' \
   --data '{
@@ -28,6 +39,24 @@ curl --location 'http://localhost:8000/v1/chat/completions' \
               "content": "Provide steps to serve an LLM using Ray Serve."
           }
       ]
+  }'
+
+# With streaming:
+curl --no-buffer 'http://localhost:8000/v1/chat/completions' \
+  --header 'Content-Type: application/json' \
+  --data '{
+      "model": "Qwen/Qwen3-32B-AWQ",
+      "messages": [
+          {
+              "role": "system", 
+              "content": "You are a helpful assistant."
+          },
+          {
+              "role": "user", 
+              "content": "Provide steps to serve an LLM using Ray Serve."
+          }
+      ],
+      "stream": true
   }'
 ```
 
