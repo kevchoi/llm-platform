@@ -145,7 +145,7 @@ module "eks" {
 
       # Restrict GPU nodes to a single AZ for EFA support?
       subnet_ids     = [module.vpc.private_subnets[1]]
-      enable_efa_support = true # Note, not supported for xlarge instances (but 8xlarge is supported)
+      # enable_efa_support = true # Note, not supported for xlarge instances (but 8xlarge is supported)
 
       block_device_mappings = {
         xvda = {
@@ -158,7 +158,7 @@ module "eks" {
       }
 
       labels = {
-        "vpc.amazonaws.com/efa.present" = "true"
+        # "vpc.amazonaws.com/efa.present" = "true"
         "nvidia.com/gpu" = "true"
         "purpose"        = "gpu"
       }

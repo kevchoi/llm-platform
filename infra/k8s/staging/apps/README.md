@@ -30,3 +30,24 @@ curl --location 'http://localhost:8000/v1/chat/completions' \
       ]
   }'
 ```
+
+Debugging:
+```
+# List ray worker pods
+kubectl get pods -n ray-service -l ray.io/node-type=worker
+
+# Exec into a worker
+kubectl exec -it <ray-worker-pod-name> -n ray-service -- /bin/bash
+
+# Then run your script or debugging commands
+python your_script.py
+
+# List ray worker pods
+kubectl get pods -n ray-service -l ray.io/node-type=worker
+
+# Exec into a worker
+kubectl exec -it <ray-worker-pod-name> -n ray-service -- /bin/bash
+
+# Then run your script or debugging commands
+python your_script.py
+```

@@ -1,28 +1,54 @@
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: aws-efa-device-plugin
-  namespace: argocd
-spec:
-  project: default
-  source:
-    repoURL: https://aws.github.io/eks-charts
-    chart: aws-efa-k8s-device-plugin
-    targetRevision: v0.5.19
-    helm:
-      values: |
-        nodeSelector:
-          vpc.amazonaws.com/efa.present: 'true'
-        tolerations:
-          - key: nvidia.com/gpu
-            operator: Exists
-            effect: NoSchedule
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: kube-system
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-    syncOptions:
-      - CreateNamespace=true
+# apiVersion: argoproj.io/v1alpha1
+# kind: Application
+# metadata:
+#   name: aws-efa-device-plugin
+#   namespace: argocd
+# spec:
+#   project: default
+#   source:
+#     repoURL: https://aws.github.io/eks-charts
+#     chart: aws-efa-k8s-device-plugin
+#     targetRevision: v0.5.19
+#     helm:
+#       values: |
+#         nodeSelector:
+#           vpc.amazonaws.com/efa.present: 'true'
+#         tolerations:
+#           - key: nvidia.com/gpu
+#             operator: Exists
+#             effect: NoSchedule
+#         initContainers:
+#           - name: efa-driver-installer
+#             image: public.ecr.aws/amazonlinux/amazonlinux:2023
+#             securityContext:
+#               privileged: true
+#             command:
+#               - bash
+#               - -c
+#               - |
+#                 chroot /host bash -c "
+#                   if ! command -v fi_info &>/dev/null; then
+#                     cd /tmp
+#                     curl -O https://efa-installer.amazonaws.com/aws-efa-installer-latest.tar.gz
+#                     tar -xf aws-efa-installer-latest.tar.gz
+#                     cd aws-efa-installer
+#                     ./efa_installer.sh -y --skip-kmod --skip-limit-conf --no-verify
+#                     rm -rf /tmp/aws-efa-installer*
+#                   fi
+#                 "
+#             volumeMounts:
+#               - name: host-root
+#                 mountPath: /host
+#         volumes:
+#           - name: host-root
+#             hostPath:
+#               path: /
+#   destination:
+#     server: https://kubernetes.default.svc
+#     namespace: kube-system
+#   syncPolicy:
+#     automated:
+#       prune: true
+#       selfHeal: true
+#     syncOptions:
+#       - CreateNamespace=true
