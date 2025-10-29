@@ -14,9 +14,10 @@ kubectl get svc -n ray-service
 
 kubectl port-forward svc/ray-serve-llm-serve-svc 8000:8000 -n ray-service
 
-curl --location 'http://localhost:8000/v1/chat/completions' --header 'Content-Type: application/json' 
+curl --location 'http://localhost:8000/v1/chat/completions' \
+  --header 'Content-Type: application/json' \
   --data '{
-      "model": "qwen2.5-7b-instruct",
+      "model": "Qwen/Qwen3-32B-AWQ",
       "messages": [
           {
               "role": "system", 
