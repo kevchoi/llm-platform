@@ -1,11 +1,24 @@
 package mr
 
 import (
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"io"
 	"log"
 	"net/rpc"
+	"os"
+	"sort"
+	"time"
 )
+
+// for sorting by key.
+type ByKey []KeyValue
+
+// for sorting by key.
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
 // Map functions return a slice of KeyValue.
 type KeyValue struct {
@@ -24,12 +37,108 @@ func ihash(key string) int {
 // main/mrworker.go calls this function.
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
-
 	// Your worker implementation here.
+	for {
+		args := TaskArgs{}
+		reply := TaskReply{}
+		ok := call("Coordinator.GetTask", &args, &reply)
+		if !ok {
+			fmt.Printf("coordinator not responding\n")
+			return
+		}
+		switch reply.TaskType {
+		case "Map":
+			filename := reply.Filename
+			file, err := os.Open(filename)
+			if err != nil {
+				log.Fatalf("cannot open %v", filename)
+			}
+			content, err := io.ReadAll(file)
+			if err != nil {
+				log.Fatalf("cannot read %v", filename)
+			}
+			file.Close()
+			intermediate := []*os.File{}
+			for i := 0; i < reply.TotalReduceTasks; i++ {
+				intermediateFile, err := os.CreateTemp("", "")
+				if err != nil {
+					log.Fatalf("cannot create temp file")
+				}
+				intermediate = append(intermediate, intermediateFile)
+			}
+			kva := mapf(filename, string(content))
+			for _, kv := range kva {
+				hash := ihash(kv.Key) % reply.TotalReduceTasks
+				err := json.NewEncoder(intermediate[hash]).Encode(&kv)
+				if err != nil {
+					log.Fatalf("cannot encode %v", kv)
+				}
+			}
+			for i, intermediateFile := range intermediate {
+				intermediateFile.Close()
+				os.Rename(intermediateFile.Name(), fmt.Sprintf("mr-%d-%d.txt", reply.TaskId, i))
+			}
+			args := TaskArgs{
+				TaskType: reply.TaskType,
+				TaskId:   reply.TaskId,
+			}
+			reply := TaskReply{}
+			call("Coordinator.CompleteTask", &args, &reply)
+		case "Reduce":
+			var intermediate []KeyValue
+			for i := 0; i < reply.TotalMapTasks; i++ {
+				filename := fmt.Sprintf("mr-%d-%d.txt", i, reply.TaskId)
+				file, err := os.Open(filename)
+				if err != nil {
+					log.Printf("cannot open intermediate file %v: %v", filename, err)
+					continue
+				}
+				dec := json.NewDecoder(file)
+				for {
+					var kv KeyValue
+					if err := dec.Decode(&kv); err != nil {
+						break
+					}
+					intermediate = append(intermediate, kv)
+				}
+				file.Close()
+			}
 
-	// uncomment to send the Example RPC to the coordinator.
-	// CallExample()
+			sort.Sort(ByKey(intermediate))
+			outFile, _ := os.CreateTemp("", "")
+			i := 0
+			for i < len(intermediate) {
+				j := i + 1
+				for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+					j++
+				}
+				values := []string{}
+				for k := i; k < j; k++ {
+					values = append(values, intermediate[k].Value)
+				}
+				output := reducef(intermediate[i].Key, values)
 
+				// this is the correct format for each line of Reduce output.
+				fmt.Fprintf(outFile, "%v %v\n", intermediate[i].Key, output)
+
+				i = j
+			}
+			os.Rename(outFile.Name(), fmt.Sprintf("mr-out-%d.txt", reply.TaskId))
+			args := TaskArgs{
+				TaskType: reply.TaskType,
+				TaskId:   reply.TaskId,
+			}
+			reply := TaskReply{}
+			call("Coordinator.CompleteTask", &args, &reply)
+		case "Wait":
+			time.Sleep(1000 * time.Millisecond)
+			continue
+		case "Done":
+			return
+		default:
+			panic("Should not get here")
+		}
+	}
 }
 
 // example function to show how to make an RPC call to the coordinator.
