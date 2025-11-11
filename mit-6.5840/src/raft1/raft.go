@@ -9,12 +9,14 @@ package raft
 import (
 	//	"bytes"
 
+	"bytes"
 	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	//	"6.5840/labgob"
+	"6.5840/labgob"
 	"6.5840/labrpc"
 	"6.5840/raftapi"
 	tester "6.5840/tester1"
@@ -61,8 +63,25 @@ type Raft struct {
 	nextIndex  []int
 	matchIndex []int
 
+	// State: Snapshot state
+	lastIncludedIndex int
+	lastIncludedTerm  int
+	snapshot          []byte
+
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
+}
+
+func (rf *Raft) getIndex(index int) int {
+	return index - rf.lastIncludedIndex
+}
+
+func (rf *Raft) getLogLength() int {
+	return len(rf.log) + rf.lastIncludedIndex
+}
+
+func (rf *Raft) getTerm(index int) int {
+	return rf.log[rf.getIndex(index)].Term
 }
 
 // return currentTerm and whether this server
@@ -88,13 +107,15 @@ func (rf *Raft) GetState() (int, bool) {
 // (or nil if there's not yet a snapshot).
 func (rf *Raft) persist() {
 	// Your code here (3C).
-	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// raftstate := w.Bytes()
-	// rf.persister.Save(raftstate, nil)
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(rf.currentTerm)
+	e.Encode(rf.votedFor)
+	e.Encode(rf.log)
+	e.Encode(rf.lastIncludedIndex)
+	e.Encode(rf.lastIncludedTerm)
+	raftstate := w.Bytes()
+	rf.persister.Save(raftstate, rf.snapshot)
 }
 
 // restore previously persisted state.
@@ -103,18 +124,27 @@ func (rf *Raft) readPersist(data []byte) {
 		return
 	}
 	// Your code here (3C).
-	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+
+	var currentTerm int
+	var votedFor int
+	var log []LogEntry
+	var lastIncludedIndex int
+	var lastIncludedTerm int
+	if d.Decode(&currentTerm) != nil ||
+		d.Decode(&votedFor) != nil ||
+		d.Decode(&log) != nil ||
+		d.Decode(&lastIncludedIndex) != nil ||
+		d.Decode(&lastIncludedTerm) != nil {
+		return
+	}
+	rf.currentTerm = currentTerm
+	rf.votedFor = votedFor
+	rf.log = log
+	rf.lastIncludedIndex = lastIncludedIndex
+	rf.lastIncludedTerm = lastIncludedTerm
+	rf.snapshot = rf.persister.ReadSnapshot()
 }
 
 // how many bytes in Raft's persisted log?
@@ -130,7 +160,95 @@ func (rf *Raft) PersistBytes() int {
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (3D).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
+	if index <= rf.lastIncludedIndex {
+		return
+	}
+	if index >= rf.getLogLength() {
+		return
+	}
+
+	rf.lastIncludedTerm = rf.getTerm(index)
+	newLog := []LogEntry{
+		{Term: rf.lastIncludedTerm, Command: nil},
+	}
+	rf.log = append(newLog, rf.log[rf.getIndex(index)+1:]...)
+
+	rf.lastIncludedIndex = index
+	rf.snapshot = snapshot
+	rf.persist()
+}
+
+type InstallSnapshotArgs struct {
+	Term              int
+	LeaderId          int
+	LastIncludedIndex int
+	LastIncludedTerm  int
+	Data              []byte
+	Done              bool
+}
+
+type InstallSnapshotReply struct {
+	Term int
+}
+
+func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
+	rf.mu.Lock()
+	// Return false if term < currentTerm (RequestVote RPC: Receiver implementation #1)
+	if args.Term < rf.currentTerm {
+		reply.Term = rf.currentTerm
+		rf.mu.Unlock()
+		return
+	}
+
+	// Convert to follower if term > currentTerm (Rules for Servers: All Servers #2)
+	if args.Term > rf.currentTerm {
+		rf.currentTerm = args.Term
+		rf.role = Follower
+		rf.votedFor = -1
+		rf.persist()
+	}
+	rf.electionTimeout = getElectionTimeout()
+	reply.Term = rf.currentTerm
+
+	if args.LastIncludedIndex <= rf.lastIncludedIndex {
+		rf.mu.Unlock()
+		return
+	}
+
+	// Save snapshot file, discard any existing or partial snapshot with a smaller index (InstallSnapshot RPC: Receiver implementation)
+	rf.snapshot = args.Data
+
+	newLog := []LogEntry{
+		{Term: args.LastIncludedTerm, Command: nil},
+	}
+
+	// If existing log entry has same index and term as snapshot’s last included entry, retain log entries following it and reply (InstallSnapshot RPC: Receiver implementation)
+	if args.LastIncludedIndex < rf.getLogLength() && rf.getTerm(args.LastIncludedIndex) == args.LastIncludedTerm {
+		rf.log = append(newLog, rf.log[rf.getIndex(args.LastIncludedIndex)+1:]...)
+	} else {
+		// Discard the entire log (InstallSnapshot RPC: Receiver implementation)
+		rf.log = newLog
+	}
+
+	rf.lastIncludedIndex = args.LastIncludedIndex
+	rf.lastIncludedTerm = args.LastIncludedTerm
+	rf.commitIndex = max(args.LastIncludedIndex, rf.commitIndex)
+	rf.lastApplied = max(args.LastIncludedIndex, rf.lastApplied)
+
+	rf.persist()
+
+	rf.mu.Unlock()
+	// Reset state machine using snapshot contents (and load snapshot’s cluster configuration) (InstallSnapshot RPC: Receiver implementation)
+	applyMsg := raftapi.ApplyMsg{
+		Snapshot:      args.Data,
+		SnapshotValid: true,
+		SnapshotTerm:  args.LastIncludedTerm,
+		SnapshotIndex: args.LastIncludedIndex,
+	}
+	rf.applyCh <- applyMsg
 }
 
 // example RequestVote RPC arguments structure.
@@ -170,14 +288,15 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.role = Follower
 		rf.votedFor = -1
 		rf.electionTimeout = getElectionTimeout()
+		rf.persist()
 	}
 
 	reply.Term = rf.currentTerm
 	reply.VoteGranted = false
 	// Grant vote if votedFor is -1 or candidateId... (RequestVote RPC: Receiver implementation #2)
 	if rf.votedFor == -1 || rf.votedFor == args.CandidateID {
-		lastLogIndex := len(rf.log) - 1
-		lastLogTerm := rf.log[lastLogIndex].Term
+		lastLogIndex := rf.getLogLength() - 1
+		lastLogTerm := rf.getTerm(lastLogIndex)
 		// ... and candidate's log is at least as up-to-date as receiver's log (RequestVote RPC: Receiver implementation #2)
 		//   "If the logs have last entries with different terms, then the log with the later term is more up-to-date.
 		//    If the logs end with the same term, then whichever log is longer is more up-to-date."
@@ -185,6 +304,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 			rf.votedFor = args.CandidateID
 			reply.VoteGranted = true
 			rf.electionTimeout = getElectionTimeout()
+			rf.persist()
 		}
 	}
 }
@@ -201,6 +321,9 @@ type AppendEntriesArgs struct {
 type AppendEntriesReply struct {
 	Term    int
 	Success bool
+	XTerm   int
+	XIndex  int
+	XLen    int
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
@@ -219,36 +342,56 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.currentTerm = args.Term
 		rf.role = Follower
 		rf.votedFor = -1
+		rf.persist()
 	}
 	// Reset election timeout
 	rf.electionTimeout = getElectionTimeout()
 
 	// Return false if log doesn’t contain an entry at prevLogIndex whose term matches prevLogTerm (AppendEntries RPC: Receiver implementation #2)
-	if args.PrevLogIndex >= len(rf.log) || rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
+	if args.PrevLogIndex >= rf.getLogLength() {
 		reply.Term = rf.currentTerm
 		reply.Success = false
+		reply.XTerm = -1
+		reply.XIndex = -1
+		reply.XLen = rf.getLogLength()
+		return
+	}
+	if rf.getTerm(args.PrevLogIndex) != args.PrevLogTerm {
+		reply.Term = rf.currentTerm
+		reply.Success = false
+		reply.XTerm = rf.getTerm(args.PrevLogIndex)
+		reply.XIndex = rf.lastIncludedIndex + 1
+		for i := args.PrevLogIndex; i > rf.lastIncludedIndex; i-- {
+			if rf.getTerm(i) != reply.XTerm {
+				reply.XIndex = i + 1
+				break
+			}
+		}
+		reply.XLen = rf.getLogLength()
 		return
 	}
 
 	for i, entry := range args.Entries {
 		currIndex := args.PrevLogIndex + 1 + i
-		if currIndex < len(rf.log) {
+		if currIndex < rf.getLogLength() {
 			// If an existing entry conflicts with a new one (same index but different terms), delete the existing entry and all that follow it (AppendEntries RPC: Receiver implementation #3)
-			if rf.log[currIndex].Term != entry.Term {
-				rf.log = rf.log[:currIndex]
+			if rf.getTerm(currIndex) != entry.Term {
+				rf.log = rf.log[:rf.getIndex(currIndex)]
 				rf.log = append(rf.log, args.Entries[i:]...)
+				rf.persist()
 				break
 			}
 		} else {
 			// Append any new entries not already in the log (AppendEntries RPC: Receiver implementation #3)
 			rf.log = append(rf.log, args.Entries[i:]...)
+			rf.persist()
 			break
 		}
 	}
 
 	// If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry) (AppendEntries RPC: Receiver implementation #5)
 	if args.LeaderCommit > rf.commitIndex {
-		rf.commitIndex = min(args.LeaderCommit, len(rf.log)-1)
+		rf.commitIndex = min(args.LeaderCommit, rf.getLogLength()-1)
 	}
 
 	reply.Term = rf.currentTerm
@@ -292,6 +435,11 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	return ok
 }
 
+func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply) bool {
+	ok := rf.peers[server].Call("Raft.InstallSnapshot", args, reply)
+	return ok
+}
+
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
 // server isn't the leader, returns false. otherwise start the
@@ -318,8 +466,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Command: command,
 	}
 	rf.log = append(rf.log, entry)
+	rf.persist()
 
-	index := len(rf.log) - 1
+	index := rf.getLogLength() - 1
 	term := rf.currentTerm
 
 	rf.mu.Unlock()
@@ -363,10 +512,11 @@ func (rf *Raft) startElection() {
 	rf.currentTerm += 1
 	rf.votedFor = rf.me
 	rf.electionTimeout = getElectionTimeout()
+	rf.persist()
 
 	currentTerm := rf.currentTerm
-	lastLogIndex := len(rf.log) - 1
-	lastLogTerm := rf.log[lastLogIndex].Term
+	lastLogIndex := rf.getLogLength() - 1
+	lastLogTerm := rf.getTerm(lastLogIndex)
 	candidateID := rf.me
 	numPeers := len(rf.peers)
 	rf.mu.Unlock()
@@ -399,6 +549,7 @@ func (rf *Raft) startElection() {
 					rf.role = Follower
 					rf.votedFor = -1
 					rf.electionTimeout = getElectionTimeout()
+					rf.persist()
 				}
 			}
 		}(i)
@@ -417,7 +568,7 @@ func (rf *Raft) startElection() {
 					rf.nextIndex = make([]int, len(rf.peers))
 					rf.matchIndex = make([]int, len(rf.peers))
 					for i := range rf.peers {
-						rf.nextIndex[i] = len(rf.log)
+						rf.nextIndex[i] = rf.getLogLength()
 						rf.matchIndex[i] = 0
 					}
 					rf.mu.Unlock()
@@ -445,6 +596,39 @@ func (rf *Raft) sendAppendEntriesToAllPeers() {
 		if i == leaderId {
 			continue
 		}
+		rf.mu.Lock()
+		nextIndex := rf.nextIndex[i]
+		lastIncludedIndex := rf.lastIncludedIndex
+		rf.mu.Unlock()
+		if nextIndex <= lastIncludedIndex {
+			go func(server int) {
+				rf.mu.Lock()
+				args := InstallSnapshotArgs{
+					Term:              rf.currentTerm,
+					LeaderId:          rf.me,
+					LastIncludedIndex: rf.lastIncludedIndex,
+					LastIncludedTerm:  rf.lastIncludedTerm,
+					Data:              rf.snapshot,
+				}
+				rf.mu.Unlock()
+				reply := InstallSnapshotReply{}
+				ok := rf.sendInstallSnapshot(server, &args, &reply)
+				if ok {
+					rf.mu.Lock()
+					defer rf.mu.Unlock()
+					if reply.Term > rf.currentTerm {
+						rf.currentTerm = reply.Term
+						rf.role = Follower
+						rf.votedFor = -1
+						rf.electionTimeout = getElectionTimeout()
+						rf.persist()
+					}
+					rf.nextIndex[server] = args.LastIncludedIndex + 1
+					rf.matchIndex[server] = args.LastIncludedIndex
+				}
+			}(i)
+			continue
+		}
 		go func(server int) {
 			rf.mu.Lock()
 			prevLogIndex := rf.nextIndex[server] - 1
@@ -452,8 +636,8 @@ func (rf *Raft) sendAppendEntriesToAllPeers() {
 				Term:         rf.currentTerm,
 				LeaderId:     rf.me,
 				PrevLogIndex: prevLogIndex,
-				PrevLogTerm:  rf.log[prevLogIndex].Term,
-				Entries:      rf.log[prevLogIndex+1:],
+				PrevLogTerm:  rf.getTerm(prevLogIndex),
+				Entries:      rf.log[rf.getIndex(prevLogIndex)+1:],
 				LeaderCommit: rf.commitIndex,
 			}
 			rf.mu.Unlock()
@@ -464,25 +648,40 @@ func (rf *Raft) sendAppendEntriesToAllPeers() {
 			if ok {
 				rf.mu.Lock()
 				defer rf.mu.Unlock()
-				if reply.Term != rf.currentTerm {
-					return
-				}
 				// If AppendEntries RPC received from new leader: convert to follower (Rules for Servers: Candidates #3)
 				if reply.Term > rf.currentTerm {
 					rf.currentTerm = reply.Term
 					rf.role = Follower
 					rf.votedFor = -1
 					rf.electionTimeout = getElectionTimeout()
+					rf.persist()
+					return
+				}
+				if reply.Term != rf.currentTerm {
 					return
 				}
 				// If last log index >= nextIndex for a follower: sendAppendEntries RPC with log entries starting at nextIndex. (Rules for Servers: Leaders #3)
 				// - If successful: update nextIndex and matchIndex for follower
 				// - If AppendEntries fails because of log inconsistency: decrement nextIndex and retry
 				if reply.Success {
-					rf.nextIndex[i] = args.PrevLogIndex + 1 + len(args.Entries)
-					rf.matchIndex[i] = args.PrevLogIndex + len(args.Entries)
+					rf.nextIndex[server] = args.PrevLogIndex + 1 + len(args.Entries)
+					rf.matchIndex[server] = args.PrevLogIndex + len(args.Entries)
 				} else {
-					rf.nextIndex[i] = max(1, rf.nextIndex[i]-1)
+					if reply.XTerm == -1 {
+						rf.nextIndex[server] = reply.XLen
+					} else {
+						rf.nextIndex[server] = reply.XIndex
+						for j := rf.getLogLength() - 1; j >= rf.lastIncludedIndex; j-- {
+							if rf.getTerm(j) == reply.XTerm {
+								rf.nextIndex[server] = j + 1
+								break
+							}
+							if rf.getTerm(j) < reply.XTerm {
+								break
+							}
+						}
+
+					}
 				}
 			}
 		}(i)
@@ -516,8 +715,8 @@ func (rf *Raft) leaderTicker() {
 			rf.sendAppendEntriesToAllPeers()
 			rf.mu.Lock()
 			// If there exists an N such that N > commitIndex, a majority of matchIndex[i] >= N, and log[N].term == currentTerm: set commitIndex = N (Rules for Servers: Leaders #4)
-			for n := rf.commitIndex + 1; n < len(rf.log); n++ {
-				if rf.log[n].Term != rf.currentTerm {
+			for n := rf.commitIndex + 1; n < rf.getLogLength(); n++ {
+				if rf.getTerm(n) != rf.currentTerm {
 					continue
 				}
 				count := 1
@@ -545,7 +744,7 @@ func (rf *Raft) commitTicker() {
 			rf.lastApplied += 1
 			applyMsg := raftapi.ApplyMsg{
 				CommandValid: true,
-				Command:      rf.log[rf.lastApplied].Command,
+				Command:      rf.log[rf.getIndex(rf.lastApplied)].Command,
 				CommandIndex: rf.lastApplied,
 			}
 			messagesToApply = append(messagesToApply, applyMsg)
@@ -589,13 +788,30 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.commitIndex = 0
 	rf.lastApplied = 0
 
+	rf.lastIncludedIndex = 0
+	rf.lastIncludedTerm = 0
+
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
+
+	rf.commitIndex = rf.lastIncludedIndex
+	rf.lastApplied = rf.lastIncludedIndex
 
 	// Start ticker goroutines for elections, leadership, and commits
 	go rf.electionTicker()
 	go rf.leaderTicker()
 	go rf.commitTicker()
+
+	if len(rf.snapshot) > 0 {
+		go func() {
+			rf.applyCh <- raftapi.ApplyMsg{
+				Snapshot:      rf.snapshot,
+				SnapshotValid: true,
+				SnapshotTerm:  rf.lastIncludedTerm,
+				SnapshotIndex: rf.lastIncludedIndex,
+			}
+		}()
+	}
 
 	return rf
 }
