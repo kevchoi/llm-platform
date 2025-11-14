@@ -2,24 +2,24 @@ package rsm
 
 import (
 	"sync"
+	"time"
 
 	"6.5840/kvsrv1/rpc"
 	"6.5840/labrpc"
-	"6.5840/raft1"
+	raft "6.5840/raft1"
 	"6.5840/raftapi"
-	"6.5840/tester1"
-
+	tester "6.5840/tester1"
 )
 
 var useRaftStateMachine bool // to plug in another raft besided raft1
-
 
 type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+	Id      int
+	Command any
 }
-
 
 // A server (i.e., ../server.go) that wants to replicate itself calls
 // MakeRSM and must implement the StateMachine interface.  This
@@ -33,6 +33,11 @@ type StateMachine interface {
 	Restore([]byte)
 }
 
+type pendingCmd struct {
+	op Op
+	ch chan any
+}
+
 type RSM struct {
 	mu           sync.Mutex
 	me           int
@@ -41,6 +46,8 @@ type RSM struct {
 	maxraftstate int // snapshot if log grows this big
 	sm           StateMachine
 	// Your definitions here.
+	pendingMap map[int]pendingCmd
+	opId       int
 }
 
 // servers[] contains the ports of the set of
@@ -64,17 +71,21 @@ func MakeRSM(servers []*labrpc.ClientEnd, me int, persister *tester.Persister, m
 		maxraftstate: maxraftstate,
 		applyCh:      make(chan raftapi.ApplyMsg),
 		sm:           sm,
+		pendingMap:   make(map[int]pendingCmd),
 	}
 	if !useRaftStateMachine {
 		rsm.rf = raft.Make(servers, me, persister, rsm.applyCh)
 	}
+
+	// your code here
+	go rsm.reader()
+
 	return rsm
 }
 
 func (rsm *RSM) Raft() raftapi.Raft {
 	return rsm.rf
 }
-
 
 // Submit a command to Raft, and wait for it to be committed.  It
 // should return ErrWrongLeader if client should find new leader and
@@ -86,5 +97,81 @@ func (rsm *RSM) Submit(req any) (rpc.Err, any) {
 	// is the argument to Submit and id is a unique id for the op.
 
 	// your code here
-	return rpc.ErrWrongLeader, nil // i'm dead, try another server.
+	rsm.mu.Lock()
+	opId := rsm.opId
+	rsm.opId += 1
+	op := Op{Id: opId, Command: req}
+	rsm.mu.Unlock()
+
+	index, term, isLeader := rsm.rf.Start(op)
+	if !isLeader {
+		return rpc.ErrWrongLeader, nil
+	}
+
+	rsm.mu.Lock()
+	clientCh := make(chan any, 1)
+	rsm.pendingMap[index] = pendingCmd{op: op, ch: clientCh}
+	rsm.mu.Unlock()
+
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	timeout := time.NewTimer(5 * time.Second)
+	defer timeout.Stop()
+
+	for {
+		select {
+		case result, ok := <-clientCh:
+			if !ok {
+				return rpc.ErrWrongLeader, nil
+			}
+			return rpc.OK, result
+		case <-ticker.C:
+			currentTerm, isLeader := rsm.rf.GetState()
+			if !isLeader || currentTerm != term {
+				rsm.mu.Lock()
+				delete(rsm.pendingMap, index)
+				rsm.mu.Unlock()
+				return rpc.ErrWrongLeader, nil
+			}
+		case <-timeout.C:
+			rsm.mu.Lock()
+			defer rsm.mu.Unlock()
+			delete(rsm.pendingMap, index)
+			return rpc.ErrWrongLeader, nil
+		}
+	}
+}
+
+func (rsm *RSM) reader() {
+	for msg := range rsm.applyCh {
+		if msg.CommandValid {
+			op := msg.Command.(Op)
+
+			result := rsm.sm.DoOp(op.Command)
+
+			rsm.mu.Lock()
+			pendingCmd, ok := rsm.pendingMap[msg.CommandIndex]
+			if ok {
+				delete(rsm.pendingMap, msg.CommandIndex)
+			}
+			rsm.mu.Unlock()
+
+			if ok {
+				if op.Id == pendingCmd.op.Id {
+					select {
+					case pendingCmd.ch <- result:
+					default:
+					}
+				} else {
+					close(pendingCmd.ch)
+				}
+			}
+		}
+	}
+	rsm.mu.Lock()
+	defer rsm.mu.Unlock()
+	for _, pendingCmd := range rsm.pendingMap {
+		close(pendingCmd.ch)
+	}
 }
