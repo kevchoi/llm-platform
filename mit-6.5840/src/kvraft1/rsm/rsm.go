@@ -46,9 +46,10 @@ type RSM struct {
 	maxraftstate int // snapshot if log grows this big
 	sm           StateMachine
 	// Your definitions here.
-	pendingMap map[int]pendingCmd
-	opId       int
-	killed     bool // set to true when RSM is shutting down
+	pendingMap  map[int]pendingCmd
+	opId        int
+	killed      bool
+	lastApplied int
 }
 
 // servers[] contains the ports of the set of
@@ -73,12 +74,18 @@ func MakeRSM(servers []*labrpc.ClientEnd, me int, persister *tester.Persister, m
 		applyCh:      make(chan raftapi.ApplyMsg),
 		sm:           sm,
 		pendingMap:   make(map[int]pendingCmd),
+		lastApplied:  0,
 	}
 	if !useRaftStateMachine {
 		rsm.rf = raft.Make(servers, me, persister, rsm.applyCh)
 	}
 
 	// your code here
+	snapshot := persister.ReadSnapshot()
+	if len(snapshot) > 0 {
+		rsm.sm.Restore(snapshot)
+	}
+
 	go rsm.reader()
 
 	return rsm
@@ -164,6 +171,7 @@ func (rsm *RSM) reader() {
 			result := rsm.sm.DoOp(op.Command)
 
 			rsm.mu.Lock()
+			rsm.lastApplied = msg.CommandIndex
 			pendingCmd, ok := rsm.pendingMap[msg.CommandIndex]
 			if ok {
 				delete(rsm.pendingMap, msg.CommandIndex)
@@ -180,6 +188,20 @@ func (rsm *RSM) reader() {
 					close(pendingCmd.ch)
 				}
 			}
+
+			rsm.mu.Lock()
+			if rsm.maxraftstate != -1 && rsm.rf.PersistBytes() >= rsm.maxraftstate {
+				snapshot := rsm.sm.Snapshot()
+				rsm.rf.Snapshot(rsm.lastApplied, snapshot)
+			}
+			rsm.mu.Unlock()
+		} else if msg.SnapshotValid {
+			rsm.mu.Lock()
+			if msg.SnapshotIndex > rsm.lastApplied {
+				rsm.sm.Restore(msg.Snapshot)
+				rsm.lastApplied = msg.SnapshotIndex
+			}
+			rsm.mu.Unlock()
 		}
 	}
 	rsm.mu.Lock()
