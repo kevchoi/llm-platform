@@ -113,10 +113,10 @@ func (rsm *RSM) Submit(req any) (rpc.Err, any) {
 	rsm.pendingMap[index] = pendingCmd{op: op, ch: clientCh}
 	rsm.mu.Unlock()
 
-	ticker := time.NewTicker(50 * time.Millisecond)
+	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 
-	timeout := time.NewTimer(5 * time.Second)
+	timeout := time.NewTimer(2 * time.Second)
 	defer timeout.Stop()
 
 	for {

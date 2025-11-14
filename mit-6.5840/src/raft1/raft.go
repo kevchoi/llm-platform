@@ -348,7 +348,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.electionTimeout = getElectionTimeout()
 
 	// Return false if log doesn’t contain an entry at prevLogIndex whose term matches prevLogTerm (AppendEntries RPC: Receiver implementation #2)
-	if args.PrevLogIndex >= rf.getLogLength() {
+	if args.PrevLogIndex >= rf.getLogLength() || args.PrevLogIndex < rf.lastIncludedIndex {
 		reply.Term = rf.currentTerm
 		reply.Success = false
 		reply.XTerm = -1
@@ -489,12 +489,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
 	// Your code here, if desired.
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	if rf.applyCh != nil {
-		close(rf.applyCh)
-		rf.applyCh = nil
-	}
 }
 
 func (rf *Raft) killed() bool {
@@ -575,7 +569,7 @@ func (rf *Raft) startElection() {
 					rf.matchIndex = make([]int, len(rf.peers))
 					for i := range rf.peers {
 						rf.nextIndex[i] = rf.getLogLength()
-						rf.matchIndex[i] = 0
+						rf.matchIndex[i] = rf.lastIncludedIndex
 					}
 					rf.mu.Unlock()
 					// Upon election: send initial empty AppendEntries RPCs (heartbeat) to each server; repeat during idle periods toprevent election timeouts (Rules for Servers: Leaders #1)
@@ -602,13 +596,10 @@ func (rf *Raft) sendAppendEntriesToAllPeers() {
 		if i == leaderId {
 			continue
 		}
-		rf.mu.Lock()
-		nextIndex := rf.nextIndex[i]
-		lastIncludedIndex := rf.lastIncludedIndex
-		rf.mu.Unlock()
-		if nextIndex <= lastIncludedIndex {
-			go func(server int) {
-				rf.mu.Lock()
+		go func(server int) {
+			rf.mu.Lock()
+			prevLogIndex := rf.nextIndex[server] - 1
+			if prevLogIndex < rf.lastIncludedIndex {
 				args := InstallSnapshotArgs{
 					Term:              rf.currentTerm,
 					LeaderId:          rf.me,
@@ -617,6 +608,7 @@ func (rf *Raft) sendAppendEntriesToAllPeers() {
 					Data:              rf.snapshot,
 				}
 				rf.mu.Unlock()
+
 				reply := InstallSnapshotReply{}
 				ok := rf.sendInstallSnapshot(server, &args, &reply)
 				if ok {
@@ -632,61 +624,72 @@ func (rf *Raft) sendAppendEntriesToAllPeers() {
 					rf.nextIndex[server] = args.LastIncludedIndex + 1
 					rf.matchIndex[server] = args.LastIncludedIndex
 				}
-			}(i)
-			continue
-		}
-		go func(server int) {
-			rf.mu.Lock()
-			prevLogIndex := rf.nextIndex[server] - 1
-			args := AppendEntriesArgs{
-				Term:         rf.currentTerm,
-				LeaderId:     rf.me,
-				PrevLogIndex: prevLogIndex,
-				PrevLogTerm:  rf.getTerm(prevLogIndex),
-				Entries:      rf.log[rf.getIndex(prevLogIndex)+1:],
-				LeaderCommit: rf.commitIndex,
-			}
-			rf.mu.Unlock()
-
-			reply := AppendEntriesReply{}
-			ok := rf.sendAppendEntries(server, &args, &reply)
-
-			if ok {
-				rf.mu.Lock()
-				defer rf.mu.Unlock()
-				// If AppendEntries RPC received from new leader: convert to follower (Rules for Servers: Candidates #3)
-				if reply.Term > rf.currentTerm {
-					rf.currentTerm = reply.Term
-					rf.role = Follower
-					rf.votedFor = -1
-					rf.electionTimeout = getElectionTimeout()
-					rf.persist()
-					return
+			} else {
+				args := AppendEntriesArgs{
+					Term:         rf.currentTerm,
+					LeaderId:     rf.me,
+					PrevLogIndex: prevLogIndex,
+					PrevLogTerm:  rf.getTerm(prevLogIndex),
+					Entries:      rf.log[rf.getIndex(prevLogIndex)+1:],
+					LeaderCommit: rf.commitIndex,
 				}
-				if reply.Term != rf.currentTerm {
-					return
-				}
-				// If last log index >= nextIndex for a follower: sendAppendEntries RPC with log entries starting at nextIndex. (Rules for Servers: Leaders #3)
-				// - If successful: update nextIndex and matchIndex for follower
-				// - If AppendEntries fails because of log inconsistency: decrement nextIndex and retry
-				if reply.Success {
-					rf.nextIndex[server] = args.PrevLogIndex + 1 + len(args.Entries)
-					rf.matchIndex[server] = args.PrevLogIndex + len(args.Entries)
-				} else {
-					if reply.XTerm == -1 {
-						rf.nextIndex[server] = reply.XLen
-					} else {
-						rf.nextIndex[server] = reply.XIndex
-						for j := rf.getLogLength() - 1; j >= rf.lastIncludedIndex; j-- {
-							if rf.getTerm(j) == reply.XTerm {
-								rf.nextIndex[server] = j + 1
-								break
+				rf.mu.Unlock()
+
+				reply := AppendEntriesReply{}
+				ok := rf.sendAppendEntries(server, &args, &reply)
+
+				if ok {
+					rf.mu.Lock()
+					defer rf.mu.Unlock()
+					// If AppendEntries RPC received from new leader: convert to follower (Rules for Servers: Candidates #3)
+					if reply.Term > rf.currentTerm {
+						rf.currentTerm = reply.Term
+						rf.role = Follower
+						rf.votedFor = -1
+						rf.electionTimeout = getElectionTimeout()
+						rf.persist()
+						return
+					}
+					if reply.Term != rf.currentTerm {
+						return
+					}
+					// If last log index >= nextIndex for a follower: sendAppendEntries RPC with log entries starting at nextIndex. (Rules for Servers: Leaders #3)
+					// - If successful: update nextIndex and matchIndex for follower
+					// - If AppendEntries fails because of log inconsistency: decrement nextIndex and retry
+					if reply.Success {
+						rf.nextIndex[server] = args.PrevLogIndex + 1 + len(args.Entries)
+						rf.matchIndex[server] = args.PrevLogIndex + len(args.Entries)
+						// If there exists an N such that N > commitIndex, a majority of matchIndex[i] >= N, and log[N].term == currentTerm: set commitIndex = N (Rules for Servers: Leaders #4)
+						for n := rf.commitIndex + 1; n < rf.getLogLength(); n++ {
+							if rf.getTerm(n) != rf.currentTerm {
+								continue
 							}
-							if rf.getTerm(j) < reply.XTerm {
-								break
+							count := 1
+							for i := range rf.peers {
+								if i != rf.me && rf.matchIndex[i] >= n {
+									count++
+								}
+							}
+							if count > len(rf.peers)/2 {
+								rf.commitIndex = n
 							}
 						}
+					} else {
+						if reply.XTerm == -1 {
+							rf.nextIndex[server] = reply.XLen
+						} else {
+							rf.nextIndex[server] = reply.XIndex
+							for j := rf.getLogLength() - 1; j >= rf.lastIncludedIndex; j-- {
+								if rf.getTerm(j) == reply.XTerm {
+									rf.nextIndex[server] = j + 1
+									break
+								}
+								if rf.getTerm(j) < reply.XTerm {
+									break
+								}
+							}
 
+						}
 					}
 				}
 			}
