@@ -48,6 +48,7 @@ type RSM struct {
 	// Your definitions here.
 	pendingMap map[int]pendingCmd
 	opId       int
+	killed     bool // set to true when RSM is shutting down
 }
 
 // servers[] contains the ports of the set of
@@ -98,6 +99,10 @@ func (rsm *RSM) Submit(req any) (rpc.Err, any) {
 
 	// your code here
 	rsm.mu.Lock()
+	if rsm.killed {
+		rsm.mu.Unlock()
+		return rpc.ErrWrongLeader, nil
+	}
 	opId := rsm.opId
 	rsm.opId += 1
 	op := Op{Id: opId, Command: req}
@@ -127,6 +132,14 @@ func (rsm *RSM) Submit(req any) (rpc.Err, any) {
 			}
 			return rpc.OK, result
 		case <-ticker.C:
+			rsm.mu.Lock()
+			if rsm.killed {
+				delete(rsm.pendingMap, index)
+				rsm.mu.Unlock()
+				return rpc.ErrWrongLeader, nil
+			}
+			rsm.mu.Unlock()
+
 			currentTerm, isLeader := rsm.rf.GetState()
 			if !isLeader || currentTerm != term {
 				rsm.mu.Lock()
@@ -171,6 +184,7 @@ func (rsm *RSM) reader() {
 	}
 	rsm.mu.Lock()
 	defer rsm.mu.Unlock()
+	rsm.killed = true
 	for _, pendingCmd := range rsm.pendingMap {
 		close(pendingCmd.ch)
 	}
