@@ -99,6 +99,7 @@ func (ck *Clerk) Put(key string, value string, version rpc.Tversion) rpc.Err {
 	ck.requestId++
 	ck.mu.Unlock()
 	args := &rpc.PutArgs{Key: key, Value: value, Version: version, ClientId: ck.clientId, RequestId: requestId}
+	firstAttempt := true
 	for {
 		ck.mu.Lock()
 		startLeader := ck.leader
@@ -123,6 +124,9 @@ func (ck *Clerk) Put(key string, value string, version rpc.Tversion) rpc.Err {
 				ck.mu.Lock()
 				ck.leader = index
 				ck.mu.Unlock()
+				if !firstAttempt {
+					return rpc.ErrMaybe
+				}
 				return rpc.ErrVersion
 			case rpc.ErrNoKey:
 				ck.mu.Lock()
@@ -133,6 +137,7 @@ func (ck *Clerk) Put(key string, value string, version rpc.Tversion) rpc.Err {
 				continue
 			}
 		}
+		firstAttempt = false
 		time.Sleep(100 * time.Millisecond)
 	}
 }
