@@ -9,6 +9,7 @@ import (
 	"6.5840/kvsrv1/rpc"
 	kvtest "6.5840/kvtest1"
 	"6.5840/shardkv1/shardcfg"
+	"6.5840/shardkv1/shardgrp"
 	tester "6.5840/tester1"
 )
 
@@ -53,6 +54,59 @@ func (sck *ShardCtrler) InitConfig(cfg *shardcfg.ShardConfig) {
 // controller.
 func (sck *ShardCtrler) ChangeConfigTo(new *shardcfg.ShardConfig) {
 	// Your code here.
+	old := sck.Query()
+	for shard := shardcfg.Tshid(0); shard < shardcfg.NShards; shard++ {
+		oldGid := old.Shards[shard]
+		newGid := new.Shards[shard]
+		if oldGid == newGid {
+			continue
+		}
+		if oldGid == 0 && newGid != 0 {
+			_, newServers, _ := new.GidServers(shard)
+			newClerk := shardgrp.MakeClerk(sck.clnt, newServers)
+			newClerk.InstallShard(shard, []byte{}, new.Num)
+			continue
+		}
+		if oldGid != 0 && newGid == 0 {
+			_, oldServers, _ := old.GidServers(shard)
+			oldClerk := shardgrp.MakeClerk(sck.clnt, oldServers)
+			_, err := oldClerk.FreezeShard(shard, new.Num)
+			if err == rpc.OK {
+				oldClerk.DeleteShard(shard, new.Num)
+			}
+			continue
+		}
+		if oldGid != 0 && newGid != 0 {
+			_, oldServers, _ := old.GidServers(shard)
+			_, newServers, _ := new.GidServers(shard)
+
+			oldClerk := shardgrp.MakeClerk(sck.clnt, oldServers)
+			state, err := oldClerk.FreezeShard(shard, new.Num)
+			if err != rpc.OK {
+				continue
+			}
+
+			newClerk := shardgrp.MakeClerk(sck.clnt, newServers)
+			err = newClerk.InstallShard(shard, state, new.Num)
+			if err != rpc.OK {
+				continue
+			}
+		}
+	}
+
+	// Update configuration before deleting shards so that clients can get the new configuration
+	_, ver, _ := sck.IKVClerk.Get("conf")
+	sck.IKVClerk.Put("conf", new.String(), ver)
+
+	for shard := shardcfg.Tshid(0); shard < shardcfg.NShards; shard++ {
+		oldGid := old.Shards[shard]
+		newGid := new.Shards[shard]
+		if oldGid != newGid && oldGid != 0 && newGid != 0 {
+			_, oldServers, _ := old.GidServers(shard)
+			oldClerk := shardgrp.MakeClerk(sck.clnt, oldServers)
+			oldClerk.DeleteShard(shard, new.Num)
+		}
+	}
 }
 
 // Return the current configuration

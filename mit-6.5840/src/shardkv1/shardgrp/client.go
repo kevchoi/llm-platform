@@ -7,6 +7,7 @@ import (
 
 	"6.5840/kvsrv1/rpc"
 	"6.5840/shardkv1/shardcfg"
+	"6.5840/shardkv1/shardgrp/shardrpc"
 	tester "6.5840/tester1"
 )
 
@@ -14,26 +15,18 @@ type Clerk struct {
 	clnt    *tester.Clnt
 	servers []string
 	// You will have to modify this struct.
-	mu        sync.Mutex
-	leader    int
-	clientId  int
-	requestId int
+	mu     sync.Mutex
+	leader int
 }
 
 func MakeClerk(clnt *tester.Clnt, servers []string) *Clerk {
 	ck := &Clerk{clnt: clnt, servers: servers, leader: rand.Intn(len(servers))}
-	ck.clientId = rand.Int()
-	ck.requestId = 0
 	return ck
 }
 
 func (ck *Clerk) Get(key string) (string, rpc.Tversion, rpc.Err) {
 	// Your code here
-	ck.mu.Lock()
-	requestId := ck.requestId
-	ck.requestId++
-	ck.mu.Unlock()
-	args := &rpc.GetArgs{Key: key, ClientId: ck.clientId, RequestId: requestId}
+	args := &rpc.GetArgs{Key: key}
 	for {
 		ck.mu.Lock()
 		startLeader := ck.leader
@@ -50,11 +43,11 @@ func (ck *Clerk) Get(key string) (string, rpc.Tversion, rpc.Err) {
 				ck.mu.Unlock()
 				return reply.Value, reply.Version, reply.Err
 			}
-			if ok && reply.Err == rpc.ErrNoKey {
+			if ok && (reply.Err == rpc.ErrNoKey || reply.Err == rpc.ErrWrongGroup) {
 				ck.mu.Lock()
 				ck.leader = index
 				ck.mu.Unlock()
-				return "", 0, rpc.ErrNoKey
+				return "", 0, reply.Err
 			}
 			if ok && reply.Err == rpc.ErrWrongLeader {
 				continue
@@ -64,13 +57,9 @@ func (ck *Clerk) Get(key string) (string, rpc.Tversion, rpc.Err) {
 	}
 }
 
-func (ck *Clerk) Put(key string, value string, version rpc.Tversion) rpc.Err {
+func (ck *Clerk) Put(key string, value string, version rpc.Tversion, clientId int, requestId int) rpc.Err {
 	// Your code here
-	ck.mu.Lock()
-	requestId := ck.requestId
-	ck.requestId++
-	ck.mu.Unlock()
-	args := &rpc.PutArgs{Key: key, Value: value, Version: version, ClientId: ck.clientId, RequestId: requestId}
+	args := &rpc.PutArgs{Key: key, Value: value, Version: version, ClientId: clientId, RequestId: requestId}
 	firstAttempt := true
 	for {
 		ck.mu.Lock()
@@ -100,11 +89,11 @@ func (ck *Clerk) Put(key string, value string, version rpc.Tversion) rpc.Err {
 					return rpc.ErrMaybe
 				}
 				return rpc.ErrVersion
-			case rpc.ErrNoKey:
+			case rpc.ErrNoKey, rpc.ErrWrongGroup:
 				ck.mu.Lock()
 				ck.leader = index
 				ck.mu.Unlock()
-				return rpc.ErrNoKey
+				return reply.Err
 			case rpc.ErrWrongLeader:
 				continue
 			}
@@ -116,15 +105,99 @@ func (ck *Clerk) Put(key string, value string, version rpc.Tversion) rpc.Err {
 
 func (ck *Clerk) FreezeShard(s shardcfg.Tshid, num shardcfg.Tnum) ([]byte, rpc.Err) {
 	// Your code here
-	return nil, ""
+	args := &shardrpc.FreezeShardArgs{Shard: s, Num: num}
+	for {
+		ck.mu.Lock()
+		startLeader := ck.leader
+		ck.mu.Unlock()
+
+		for i := 0; i < len(ck.servers); i++ {
+			reply := &shardrpc.FreezeShardReply{}
+			index := (startLeader + i) % len(ck.servers)
+			server := ck.servers[index]
+			ok := ck.clnt.Call(server, "KVServer.FreezeShard", args, reply)
+			if ok && reply.Err == rpc.OK {
+				ck.mu.Lock()
+				ck.leader = index
+				ck.mu.Unlock()
+				return reply.State, rpc.OK
+			}
+			if ok && reply.Err == rpc.ErrWrongGroup {
+				ck.mu.Lock()
+				ck.leader = index
+				ck.mu.Unlock()
+				return nil, rpc.ErrWrongGroup
+			}
+			if ok && reply.Err == rpc.ErrWrongLeader {
+				continue
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func (ck *Clerk) InstallShard(s shardcfg.Tshid, state []byte, num shardcfg.Tnum) rpc.Err {
 	// Your code here
-	return ""
+	args := &shardrpc.InstallShardArgs{Shard: s, State: state, Num: num}
+	for {
+		ck.mu.Lock()
+		startLeader := ck.leader
+		ck.mu.Unlock()
+
+		for i := 0; i < len(ck.servers); i++ {
+			reply := &shardrpc.InstallShardReply{}
+			index := (startLeader + i) % len(ck.servers)
+			server := ck.servers[index]
+			ok := ck.clnt.Call(server, "KVServer.InstallShard", args, reply)
+			if ok && reply.Err == rpc.OK {
+				ck.mu.Lock()
+				ck.leader = index
+				ck.mu.Unlock()
+				return reply.Err
+			}
+			if ok && reply.Err == rpc.ErrWrongGroup {
+				ck.mu.Lock()
+				ck.leader = index
+				ck.mu.Unlock()
+				return reply.Err
+			}
+			if ok && reply.Err == rpc.ErrWrongLeader {
+				continue
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func (ck *Clerk) DeleteShard(s shardcfg.Tshid, num shardcfg.Tnum) rpc.Err {
 	// Your code here
-	return ""
+	args := &shardrpc.DeleteShardArgs{Shard: s, Num: num}
+	for {
+		ck.mu.Lock()
+		startLeader := ck.leader
+		ck.mu.Unlock()
+
+		for i := 0; i < len(ck.servers); i++ {
+			reply := &shardrpc.DeleteShardReply{}
+			index := (startLeader + i) % len(ck.servers)
+			server := ck.servers[index]
+			ok := ck.clnt.Call(server, "KVServer.DeleteShard", args, reply)
+			if ok && reply.Err == rpc.OK {
+				ck.mu.Lock()
+				ck.leader = index
+				ck.mu.Unlock()
+				return reply.Err
+			}
+			if ok && reply.Err == rpc.ErrWrongGroup {
+				ck.mu.Lock()
+				ck.leader = index
+				ck.mu.Unlock()
+				return reply.Err
+			}
+			if ok && reply.Err == rpc.ErrWrongLeader {
+				continue
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }

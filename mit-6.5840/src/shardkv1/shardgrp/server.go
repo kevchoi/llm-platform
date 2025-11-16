@@ -2,6 +2,7 @@ package shardgrp
 
 import (
 	"bytes"
+	"log"
 	"sync"
 	"sync/atomic"
 
@@ -25,6 +26,14 @@ type Session struct {
 	Reply     any
 }
 
+type ShardState struct {
+	FreezeNum  shardcfg.Tnum
+	InstallNum shardcfg.Tnum
+	DeleteNum  shardcfg.Tnum
+	Owned      bool
+	Frozen     bool
+}
+
 type KVServer struct {
 	me   int
 	dead int32 // set by Kill()
@@ -32,10 +41,11 @@ type KVServer struct {
 	gid  tester.Tgid
 
 	// Your code here
-	mu       sync.Mutex
-	data     map[string]*Entry
-	sessions map[int]Session
-	shards   map[shardcfg.Tshid]bool
+	mu           sync.Mutex
+	data         map[string]*Entry
+	sessions     map[int]Session
+	shards       map[shardcfg.Tshid]*ShardState
+	frozenShards map[shardcfg.Tshid][]byte
 }
 
 func (kv *KVServer) DoOp(req any) any {
@@ -45,9 +55,10 @@ func (kv *KVServer) DoOp(req any) any {
 
 	switch req := req.(type) {
 	case *rpc.GetArgs:
-		session, ok := kv.sessions[req.ClientId]
-		if ok && session.RequestId == req.RequestId {
-			return session.Reply
+		shard := shardcfg.Key2Shard(req.Key)
+		state, ok := kv.shards[shard]
+		if !ok || !state.Owned {
+			return &rpc.GetReply{Err: rpc.ErrWrongGroup}
 		}
 		entry, ok := kv.data[req.Key]
 		var reply *rpc.GetReply
@@ -56,9 +67,13 @@ func (kv *KVServer) DoOp(req any) any {
 		} else {
 			reply = &rpc.GetReply{Value: entry.Value, Version: entry.Version, Err: rpc.OK}
 		}
-		kv.sessions[req.ClientId] = Session{ClientId: req.ClientId, RequestId: req.RequestId, Reply: reply}
 		return reply
 	case *rpc.PutArgs:
+		shard := shardcfg.Key2Shard(req.Key)
+		state, ok := kv.shards[shard]
+		if !ok || !state.Owned || state.Frozen {
+			return &rpc.PutReply{Err: rpc.ErrWrongGroup}
+		}
 		session, ok := kv.sessions[req.ClientId]
 		if ok && session.RequestId == req.RequestId {
 			return session.Reply
@@ -85,6 +100,78 @@ func (kv *KVServer) DoOp(req any) any {
 		}
 		kv.sessions[req.ClientId] = Session{ClientId: req.ClientId, RequestId: req.RequestId, Reply: reply}
 		return reply
+	case *shardrpc.FreezeShardArgs:
+		state, ok := kv.shards[req.Shard]
+		if !ok || !state.Owned {
+			return &shardrpc.FreezeShardReply{Err: rpc.ErrWrongGroup}
+		}
+		if req.Num <= state.FreezeNum {
+			// Return the cached frozen state for duplicate requests
+			cachedState, hasCached := kv.frozenShards[req.Shard]
+			if !hasCached {
+				cachedState = []byte{}
+			}
+			return &shardrpc.FreezeShardReply{
+				Err:   rpc.OK,
+				Num:   state.FreezeNum,
+				State: cachedState,
+			}
+		}
+		state.FreezeNum = req.Num
+		state.Frozen = true
+		shardData := make(map[string]*Entry)
+		for key, entry := range kv.data {
+			if shardcfg.Key2Shard(key) == req.Shard {
+				shardData[key] = &Entry{Value: entry.Value, Version: entry.Version}
+			}
+		}
+		w := new(bytes.Buffer)
+		e := labgob.NewEncoder(w)
+		e.Encode(shardData)
+		frozenShard := w.Bytes()
+		kv.frozenShards[req.Shard] = frozenShard
+		return &shardrpc.FreezeShardReply{Err: rpc.OK, Num: state.FreezeNum, State: frozenShard}
+	case *shardrpc.InstallShardArgs:
+		state, ok := kv.shards[req.Shard]
+		if !ok {
+			state = &ShardState{Owned: false, Frozen: false, InstallNum: 0}
+			kv.shards[req.Shard] = state
+		}
+		if req.Num <= state.InstallNum {
+			return &shardrpc.InstallShardReply{Err: rpc.OK}
+		}
+		state.InstallNum = req.Num
+		if len(req.State) > 0 {
+			r := bytes.NewBuffer(req.State)
+			d := labgob.NewDecoder(r)
+			var shardData map[string]*Entry
+			if d.Decode(&shardData) != nil {
+				log.Fatalf("%v couldn't decode shardData", shardData)
+			}
+			for key, entry := range shardData {
+				kv.data[key] = &Entry{Value: entry.Value, Version: entry.Version}
+			}
+		}
+		state.Owned = true
+		state.Frozen = false
+		return &shardrpc.InstallShardReply{Err: rpc.OK}
+	case *shardrpc.DeleteShardArgs:
+		state, ok := kv.shards[req.Shard]
+		if !ok {
+			return &shardrpc.DeleteShardReply{Err: rpc.ErrWrongGroup}
+		}
+		if req.Num <= state.DeleteNum {
+			return &shardrpc.DeleteShardReply{Err: rpc.OK}
+		}
+		state.DeleteNum = req.Num
+		for key := range kv.data {
+			if shardcfg.Key2Shard(key) == req.Shard {
+				delete(kv.data, key)
+			}
+		}
+		delete(kv.shards, req.Shard)
+		delete(kv.frozenShards, req.Shard)
+		return &shardrpc.DeleteShardReply{Err: rpc.OK}
 	default:
 		return nil
 	}
@@ -98,6 +185,8 @@ func (kv *KVServer) Snapshot() []byte {
 	e := labgob.NewEncoder(w)
 	e.Encode(kv.data)
 	e.Encode(kv.sessions)
+	e.Encode(kv.shards)
+	e.Encode(kv.frozenShards)
 	return w.Bytes()
 }
 
@@ -109,11 +198,15 @@ func (kv *KVServer) Restore(data []byte) {
 	d := labgob.NewDecoder(r)
 	var newData map[string]*Entry
 	var newSessions map[int]Session
-	if d.Decode(&newData) != nil || d.Decode(&newSessions) != nil {
+	var newShards map[shardcfg.Tshid]*ShardState
+	var newfrozenShards map[shardcfg.Tshid][]byte
+	if d.Decode(&newData) != nil || d.Decode(&newSessions) != nil || d.Decode(&newShards) != nil || d.Decode(&newfrozenShards) != nil {
 		return
 	}
 	kv.data = newData
 	kv.sessions = newSessions
+	kv.shards = newShards
+	kv.frozenShards = newfrozenShards
 }
 
 func (kv *KVServer) Get(args *rpc.GetArgs, reply *rpc.GetReply) {
@@ -144,16 +237,39 @@ func (kv *KVServer) Put(args *rpc.PutArgs, reply *rpc.PutReply) {
 // shard) and return the key/values stored in that shard.
 func (kv *KVServer) FreezeShard(args *shardrpc.FreezeShardArgs, reply *shardrpc.FreezeShardReply) {
 	// Your code here
+	err, result := kv.rsm.Submit(args)
+	if err == rpc.ErrWrongLeader {
+		reply.Err = rpc.ErrWrongLeader
+		return
+	}
+	freezeReply := result.(*shardrpc.FreezeShardReply)
+	reply.State = freezeReply.State
+	reply.Num = freezeReply.Num
+	reply.Err = freezeReply.Err
 }
 
 // Install the supplied state for the specified shard.
 func (kv *KVServer) InstallShard(args *shardrpc.InstallShardArgs, reply *shardrpc.InstallShardReply) {
 	// Your code here
+	err, result := kv.rsm.Submit(args)
+	if err == rpc.ErrWrongLeader {
+		reply.Err = rpc.ErrWrongLeader
+		return
+	}
+	installReply := result.(*shardrpc.InstallShardReply)
+	reply.Err = installReply.Err
 }
 
 // Delete the specified shard.
 func (kv *KVServer) DeleteShard(args *shardrpc.DeleteShardArgs, reply *shardrpc.DeleteShardReply) {
 	// Your code here
+	err, result := kv.rsm.Submit(args)
+	if err == rpc.ErrWrongLeader {
+		reply.Err = rpc.ErrWrongLeader
+		return
+	}
+	deleteReply := result.(*shardrpc.DeleteShardReply)
+	reply.Err = deleteReply.Err
 }
 
 // the tester calls Kill() when a KVServer instance won't
@@ -180,10 +296,14 @@ func (kv *KVServer) killed() bool {
 // start goroutines for any long-running work.
 func StartServerShardGrp(servers []*labrpc.ClientEnd, gid tester.Tgid, me int, persister *tester.Persister, maxraftstate int) []tester.IService {
 	// call labgob.Register on structures you want
-	// Go's RPC library to marshall/unmarshall.
-	labgob.Register(shardrpc.FreezeShardArgs{})
-	labgob.Register(shardrpc.InstallShardArgs{})
-	labgob.Register(shardrpc.DeleteShardArgs{})
+	// Go's RPC library to marshall/unmarshall
+	labgob.Register(&shardrpc.FreezeShardArgs{})
+	labgob.Register(&shardrpc.InstallShardArgs{})
+	labgob.Register(&shardrpc.DeleteShardArgs{})
+	labgob.Register(&shardrpc.FreezeShardReply{})
+	labgob.Register(&shardrpc.InstallShardReply{})
+	labgob.Register(&shardrpc.DeleteShardReply{})
+	labgob.Register(&ShardState{})
 	labgob.Register(rsm.Op{})
 
 	labgob.Register(&rpc.PutArgs{})
@@ -194,18 +314,25 @@ func StartServerShardGrp(servers []*labrpc.ClientEnd, gid tester.Tgid, me int, p
 	labgob.Register(Session{})
 
 	kv := &KVServer{
-		gid:      gid,
-		me:       me,
-		data:     make(map[string]*Entry),
-		sessions: make(map[int]Session),
-		shards:   make(map[shardcfg.Tshid]bool),
+		gid:          gid,
+		me:           me,
+		data:         make(map[string]*Entry),
+		sessions:     make(map[int]Session),
+		shards:       make(map[shardcfg.Tshid]*ShardState),
+		frozenShards: make(map[shardcfg.Tshid][]byte),
 	}
 	kv.rsm = rsm.MakeRSM(servers, me, persister, maxraftstate, kv)
 
 	// Your code here
 	if gid == shardcfg.Gid1 {
 		for i := shardcfg.Tshid(0); i < shardcfg.NShards; i++ {
-			kv.shards[i] = true
+			kv.shards[i] = &ShardState{
+				Owned:      true,
+				Frozen:     false,
+				FreezeNum:  0,
+				InstallNum: 0,
+				DeleteNum:  0,
+			}
 		}
 	}
 
