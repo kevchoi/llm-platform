@@ -36,6 +36,18 @@ func MakeShardCtrler(clnt *tester.Clnt) *ShardCtrler {
 // controller. In part A, this method doesn't need to do anything. In
 // B and C, this method implements recovery.
 func (sck *ShardCtrler) InitController() {
+	nextCfgStr, _, err := sck.IKVClerk.Get("conf-next")
+	if err != rpc.OK || nextCfgStr == "" {
+		return
+	}
+	nextCfg := shardcfg.FromString(nextCfgStr)
+	if nextCfg == nil {
+		return
+	}
+	currCfg := sck.Query()
+	if nextCfg.Num > currCfg.Num {
+		sck.moveShards(currCfg, nextCfg)
+	}
 }
 
 // Called once by the tester to supply the first configuration.  You
@@ -55,6 +67,13 @@ func (sck *ShardCtrler) InitConfig(cfg *shardcfg.ShardConfig) {
 func (sck *ShardCtrler) ChangeConfigTo(new *shardcfg.ShardConfig) {
 	// Your code here.
 	old := sck.Query()
+	_, nextVer, _ := sck.IKVClerk.Get("conf-next")
+
+	sck.IKVClerk.Put("conf-next", new.String(), nextVer)
+	sck.moveShards(old, new)
+}
+
+func (sck *ShardCtrler) moveShards(old *shardcfg.ShardConfig, new *shardcfg.ShardConfig) {
 	for shard := shardcfg.Tshid(0); shard < shardcfg.NShards; shard++ {
 		oldGid := old.Shards[shard]
 		newGid := new.Shards[shard]
@@ -107,6 +126,9 @@ func (sck *ShardCtrler) ChangeConfigTo(new *shardcfg.ShardConfig) {
 			oldClerk.DeleteShard(shard, new.Num)
 		}
 	}
+
+	_, ver, _ = sck.IKVClerk.Get("conf-next")
+	sck.IKVClerk.Put("conf-next", "", ver)
 }
 
 // Return the current configuration
