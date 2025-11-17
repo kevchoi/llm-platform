@@ -88,26 +88,14 @@ func (sck *ShardCtrler) ChangeConfigTo(new *shardcfg.ShardConfig) {
 		return
 	}
 
-	currCfgStr, _, _ := sck.IKVClerk.Get("conf")
+	currCfgStr, currVer, _ := sck.IKVClerk.Get("conf")
 	currCfg := shardcfg.FromString(currCfgStr)
 	if new.Num <= currCfg.Num {
 		return
 	}
 	sck.moveShards(currCfg, new)
-	for {
-		currCfgStr, currVer, _ := sck.IKVClerk.Get("conf")
-		currCfg := shardcfg.FromString(currCfgStr)
-		if new.Num <= currCfg.Num {
-			break
-		}
-		err = sck.IKVClerk.Put("conf", new.String(), currVer)
-		if err == rpc.OK {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	_, nextVer, _ = sck.IKVClerk.Get("conf-next")
-	sck.IKVClerk.Put("conf-next", "", nextVer)
+	sck.IKVClerk.Put("conf", new.String(), currVer)
+	sck.IKVClerk.Put("conf-next", "", nextVer+1)
 }
 
 func (sck *ShardCtrler) moveShards(old *shardcfg.ShardConfig, new *shardcfg.ShardConfig) {
@@ -121,9 +109,7 @@ func (sck *ShardCtrler) moveShards(old *shardcfg.ShardConfig, new *shardcfg.Shar
 		oldClerk := shardgrp.MakeClerk(sck.clnt, oldServers)
 		var state []byte
 		var err rpc.Err
-		freezeRetries := 0
 		for {
-			freezeRetries++
 			state, err = oldClerk.FreezeShard(shardcfg.Tshid(i), new.Num)
 			if err == rpc.OK || err == rpc.ErrWrongGroup {
 				break
@@ -131,11 +117,15 @@ func (sck *ShardCtrler) moveShards(old *shardcfg.ShardConfig, new *shardcfg.Shar
 			time.Sleep(10 * time.Millisecond)
 		}
 
+		if err == rpc.ErrWrongGroup {
+			continue
+		}
+
 		newServers := new.Groups[newGid]
 		newClerk := shardgrp.MakeClerk(sck.clnt, newServers)
 		for {
 			err = newClerk.InstallShard(shardcfg.Tshid(i), state, new.Num)
-			if err == rpc.OK || err == rpc.ErrWrongGroup {
+			if err == rpc.OK {
 				break
 			}
 			time.Sleep(10 * time.Millisecond)
