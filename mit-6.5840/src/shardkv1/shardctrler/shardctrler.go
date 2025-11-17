@@ -5,6 +5,8 @@ package shardctrler
 //
 
 import (
+	"time"
+
 	kvsrv "6.5840/kvsrv1"
 	"6.5840/kvsrv1/rpc"
 	kvtest "6.5840/kvtest1"
@@ -36,18 +38,24 @@ func MakeShardCtrler(clnt *tester.Clnt) *ShardCtrler {
 // controller. In part A, this method doesn't need to do anything. In
 // B and C, this method implements recovery.
 func (sck *ShardCtrler) InitController() {
-	nextCfgStr, _, err := sck.IKVClerk.Get("conf-next")
-	if err != rpc.OK || nextCfgStr == "" {
+	currCfgStr, _, _ := sck.IKVClerk.Get("conf")
+	nextCfgStr, nextVer, _ := sck.IKVClerk.Get("conf-next")
+	if nextCfgStr == "" {
 		return
 	}
+	currCfg := shardcfg.FromString(currCfgStr)
 	nextCfg := shardcfg.FromString(nextCfgStr)
-	if nextCfg == nil {
+	if nextCfg.Num <= currCfg.Num {
+		sck.IKVClerk.Put("conf-next", "", nextVer)
 		return
 	}
-	currCfg := sck.Query()
-	if nextCfg.Num > currCfg.Num {
-		sck.moveShards(currCfg, nextCfg)
+	sck.moveShards(currCfg, nextCfg)
+	_, currVer, _ := sck.IKVClerk.Get("conf")
+	err := sck.IKVClerk.Put("conf", nextCfg.String(), currVer)
+	if err != rpc.OK {
+		return
 	}
+	sck.IKVClerk.Put("conf-next", "", nextVer)
 }
 
 // Called once by the tester to supply the first configuration.  You
@@ -58,6 +66,7 @@ func (sck *ShardCtrler) InitController() {
 func (sck *ShardCtrler) InitConfig(cfg *shardcfg.ShardConfig) {
 	// Your code here
 	sck.IKVClerk.Put("conf", cfg.String(), 0)
+	sck.IKVClerk.Put("conf-next", "", 0)
 }
 
 // Called by the tester to ask the controller to change the
@@ -66,77 +75,90 @@ func (sck *ShardCtrler) InitConfig(cfg *shardcfg.ShardConfig) {
 // controller.
 func (sck *ShardCtrler) ChangeConfigTo(new *shardcfg.ShardConfig) {
 	// Your code here.
-	old := sck.Query()
-	_, nextVer, _ := sck.IKVClerk.Get("conf-next")
+	nextCfgStr, nextVer, _ := sck.IKVClerk.Get("conf-next")
+	if nextCfgStr != "" {
+		nextCfg := shardcfg.FromString(nextCfgStr)
+		if nextCfg != nil && nextCfg.Num >= new.Num {
+			return
+		}
+	}
 
-	sck.IKVClerk.Put("conf-next", new.String(), nextVer)
-	sck.moveShards(old, new)
+	err := sck.IKVClerk.Put("conf-next", new.String(), nextVer)
+	if err != rpc.OK && err != rpc.ErrMaybe {
+		return
+	}
+
+	currCfgStr, _, _ := sck.IKVClerk.Get("conf")
+	currCfg := shardcfg.FromString(currCfgStr)
+	if new.Num <= currCfg.Num {
+		return
+	}
+	sck.moveShards(currCfg, new)
+	for {
+		currCfgStr, currVer, _ := sck.IKVClerk.Get("conf")
+		currCfg := shardcfg.FromString(currCfgStr)
+		if new.Num <= currCfg.Num {
+			break
+		}
+		err = sck.IKVClerk.Put("conf", new.String(), currVer)
+		if err == rpc.OK {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	_, nextVer, _ = sck.IKVClerk.Get("conf-next")
+	sck.IKVClerk.Put("conf-next", "", nextVer)
 }
 
 func (sck *ShardCtrler) moveShards(old *shardcfg.ShardConfig, new *shardcfg.ShardConfig) {
-	for shard := shardcfg.Tshid(0); shard < shardcfg.NShards; shard++ {
-		oldGid := old.Shards[shard]
-		newGid := new.Shards[shard]
+	for i, oldGid := range old.Shards {
+		newGid := new.Shards[i]
 		if oldGid == newGid {
 			continue
 		}
-		if oldGid == 0 && newGid != 0 {
-			_, newServers, _ := new.GidServers(shard)
-			newClerk := shardgrp.MakeClerk(sck.clnt, newServers)
-			newClerk.InstallShard(shard, []byte{}, new.Num)
-			continue
-		}
-		if oldGid != 0 && newGid == 0 {
-			_, oldServers, _ := old.GidServers(shard)
-			oldClerk := shardgrp.MakeClerk(sck.clnt, oldServers)
-			_, err := oldClerk.FreezeShard(shard, new.Num)
-			if err == rpc.OK {
-				oldClerk.DeleteShard(shard, new.Num)
-			}
-			continue
-		}
-		if oldGid != 0 && newGid != 0 {
-			_, oldServers, _ := old.GidServers(shard)
-			_, newServers, _ := new.GidServers(shard)
 
-			oldClerk := shardgrp.MakeClerk(sck.clnt, oldServers)
-			state, err := oldClerk.FreezeShard(shard, new.Num)
-			if err != rpc.OK {
-				continue
+		oldServers := old.Groups[oldGid]
+		oldClerk := shardgrp.MakeClerk(sck.clnt, oldServers)
+		var state []byte
+		var err rpc.Err
+		freezeRetries := 0
+		for {
+			freezeRetries++
+			state, err = oldClerk.FreezeShard(shardcfg.Tshid(i), new.Num)
+			if err == rpc.OK || err == rpc.ErrWrongGroup {
+				break
 			}
+			time.Sleep(10 * time.Millisecond)
+		}
 
-			newClerk := shardgrp.MakeClerk(sck.clnt, newServers)
-			err = newClerk.InstallShard(shard, state, new.Num)
-			if err != rpc.OK {
-				continue
+		newServers := new.Groups[newGid]
+		newClerk := shardgrp.MakeClerk(sck.clnt, newServers)
+		for {
+			err = newClerk.InstallShard(shardcfg.Tshid(i), state, new.Num)
+			if err == rpc.OK || err == rpc.ErrWrongGroup {
+				break
 			}
+			time.Sleep(10 * time.Millisecond)
+		}
+
+		for {
+			err = oldClerk.DeleteShard(shardcfg.Tshid(i), new.Num)
+			if err == rpc.OK || err == rpc.ErrWrongGroup {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
 	}
-
-	// Update configuration before deleting shards so that clients can get the new configuration
-	_, ver, _ := sck.IKVClerk.Get("conf")
-	sck.IKVClerk.Put("conf", new.String(), ver)
-
-	for shard := shardcfg.Tshid(0); shard < shardcfg.NShards; shard++ {
-		oldGid := old.Shards[shard]
-		newGid := new.Shards[shard]
-		if oldGid != newGid && oldGid != 0 && newGid != 0 {
-			_, oldServers, _ := old.GidServers(shard)
-			oldClerk := shardgrp.MakeClerk(sck.clnt, oldServers)
-			oldClerk.DeleteShard(shard, new.Num)
-		}
-	}
-
-	_, ver, _ = sck.IKVClerk.Get("conf-next")
-	sck.IKVClerk.Put("conf-next", "", ver)
 }
 
 // Return the current configuration
 func (sck *ShardCtrler) Query() *shardcfg.ShardConfig {
 	// Your code here.
-	cfg, _, err := sck.IKVClerk.Get("conf")
-	if err != rpc.OK {
-		return nil
+	for {
+		val, _, err := sck.IKVClerk.Get("conf")
+		if err == rpc.OK {
+			return shardcfg.FromString(val)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
-	return shardcfg.FromString(cfg)
 }

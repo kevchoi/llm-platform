@@ -138,6 +138,8 @@ func (kv *KVServer) DoOp(req any) any {
 			kv.shards[req.Shard] = state
 		}
 		if req.Num <= state.InstallNum {
+			state.Owned = true
+			state.Frozen = false
 			return &shardrpc.InstallShardReply{Err: rpc.OK}
 		}
 		state.InstallNum = req.Num

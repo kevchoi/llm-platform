@@ -55,12 +55,13 @@ func (ck *Clerk) Get(key string) (string, rpc.Tversion, rpc.Err) {
 		shard := shardcfg.Key2Shard(key)
 		_, servers, ok := shardConfig.GidServers(shard)
 		if !ok {
-			return "", 0, rpc.ErrNoKey
+			time.Sleep(50 * time.Millisecond)
+			continue
 		}
 		shardGrpClerk := shardgrp.MakeClerk(ck.clnt, servers)
 		value, version, err := shardGrpClerk.Get(key)
 		if err == rpc.ErrWrongGroup {
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(50 * time.Millisecond)
 			continue
 		}
 		return value, version, err
@@ -80,12 +81,13 @@ func (ck *Clerk) Put(key string, value string, version rpc.Tversion) rpc.Err {
 		shard := shardcfg.Key2Shard(key)
 		_, servers, ok := shardConfig.GidServers(shard)
 		if !ok {
-			return rpc.ErrNoKey
+			time.Sleep(50 * time.Millisecond)
+			continue
 		}
 		shardGrpClerk := shardgrp.MakeClerk(ck.clnt, servers)
 		err := shardGrpClerk.Put(key, value, version, clientId, requestId)
 		if err == rpc.ErrWrongGroup {
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(50 * time.Millisecond)
 			continue
 		}
 		return err

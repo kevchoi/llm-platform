@@ -153,13 +153,13 @@ func (ck *Clerk) InstallShard(s shardcfg.Tshid, state []byte, num shardcfg.Tnum)
 				ck.mu.Lock()
 				ck.leader = index
 				ck.mu.Unlock()
-				return reply.Err
+				return rpc.OK
 			}
 			if ok && reply.Err == rpc.ErrWrongGroup {
 				ck.mu.Lock()
 				ck.leader = index
 				ck.mu.Unlock()
-				return reply.Err
+				return rpc.ErrWrongGroup
 			}
 			if ok && reply.Err == rpc.ErrWrongLeader {
 				continue
@@ -186,13 +186,13 @@ func (ck *Clerk) DeleteShard(s shardcfg.Tshid, num shardcfg.Tnum) rpc.Err {
 				ck.mu.Lock()
 				ck.leader = index
 				ck.mu.Unlock()
-				return reply.Err
+				return rpc.OK
 			}
 			if ok && reply.Err == rpc.ErrWrongGroup {
 				ck.mu.Lock()
 				ck.leader = index
 				ck.mu.Unlock()
-				return reply.Err
+				return rpc.ErrWrongGroup
 			}
 			if ok && reply.Err == rpc.ErrWrongLeader {
 				continue
