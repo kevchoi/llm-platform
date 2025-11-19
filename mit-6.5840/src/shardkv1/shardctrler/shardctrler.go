@@ -5,7 +5,6 @@ package shardctrler
 //
 
 import (
-	"fmt"
 	"time"
 
 	kvsrv "6.5840/kvsrv1"
@@ -24,12 +23,11 @@ type ShardCtrler struct {
 	killed int32 // set by Kill()
 
 	// Your data here.
-	id string // for debugging
 }
 
 // Make a ShardCltler, which stores its state in a kvsrv.
 func MakeShardCtrler(clnt *tester.Clnt) *ShardCtrler {
-	sck := &ShardCtrler{clnt: clnt, id: fmt.Sprintf("CTL-%d", time.Now().UnixNano()%10000)}
+	sck := &ShardCtrler{clnt: clnt}
 	srv := tester.ServerName(tester.GRP0, 0)
 	sck.IKVClerk = kvsrv.MakeClerk(clnt, srv)
 	// Your code here.
@@ -54,7 +52,6 @@ func (sck *ShardCtrler) InitController() {
 	}
 	sck.moveShards(currCfg, nextCfg)
 
-	// Re-check if another controller already updated conf while we were doing moveShards
 	currCfgStr, currVer, _ := sck.IKVClerk.Get("conf")
 	currCfg = shardcfg.FromString(currCfgStr)
 	if currCfg.Num >= nextCfg.Num {
@@ -110,7 +107,6 @@ func (sck *ShardCtrler) ChangeConfigTo(new *shardcfg.ShardConfig) {
 	}
 	sck.moveShards(currCfg, new)
 
-	// Re-check if another controller already updated conf while we were doing moveShards
 	currCfgStr, currVer, _ := sck.IKVClerk.Get("conf")
 	currCfg = shardcfg.FromString(currCfgStr)
 	if currCfg.Num >= new.Num {
@@ -121,7 +117,6 @@ func (sck *ShardCtrler) ChangeConfigTo(new *shardcfg.ShardConfig) {
 
 	err = sck.IKVClerk.Put("conf", new.String(), currVer)
 
-	// Always try to clean up conf-next, regardless of whether our Put succeeded
 	_, nextVer, _ = sck.IKVClerk.Get("conf-next")
 	sck.IKVClerk.Put("conf-next", "", nextVer)
 }
