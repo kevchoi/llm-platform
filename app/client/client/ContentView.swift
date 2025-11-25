@@ -8,6 +8,8 @@
 import SwiftUI
 
 struct ContentView: View {
+    @StateObject private var screenMonitor = ScreenMonitor()
+    
     var body: some View {
         VStack {
             Image(systemName: "globe")
@@ -16,6 +18,20 @@ struct ContentView: View {
             Text("Hello, world!")
         }
         .padding()
+        Button {
+            Task {
+                await screenMonitor.getWindows()
+            }
+        } label: {
+            Text("Get Windows")
+                .font(.title3)
+                .fontWeight(.semibold)
+                .frame(maxWidth: .infinity)
+                .padding()
+                .foregroundColor(.white)
+        }
+        .buttonStyle(.plain)
+        .cornerRadius(10)
     }
 }
 

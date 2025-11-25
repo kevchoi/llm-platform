@@ -11,7 +11,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		DEAE97B22ED53658004864FB /* client.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = client.app; path = "/Users/kev/code/llm-platform/app/client/build/Debug/client.app"; sourceTree = "<absolute>"; };
+		DE7D88C02ED610A70024BA31 /* client.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = client.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		DEAE97C32ED54020004864FB /* .gitignore */ = {isa = PBXFileReference; lastKnownFileType = text; path = .gitignore; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -39,6 +39,7 @@
 			children = (
 				DEAE97B42ED53658004864FB /* client */,
 				DEAE97C32ED54020004864FB /* .gitignore */,
+				DE7D88C02ED610A70024BA31 /* client.app */,
 			);
 			sourceTree = "<group>";
 		};
@@ -64,7 +65,7 @@
 			packageProductDependencies = (
 			);
 			productName = client;
-			productReference = DEAE97B22ED53658004864FB /* client.app */;
+			productReference = DE7D88C02ED610A70024BA31 /* client.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
