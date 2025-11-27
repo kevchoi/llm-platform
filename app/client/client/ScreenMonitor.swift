@@ -48,4 +48,20 @@ class ScreenMonitor: ObservableObject {
             print("Error fetching windows: \(error.localizedDescription)")
         }
     }
+
+    func captureScreen() async throws -> CGImage? {
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        
+        guard let display = content.displays.first else { return nil }
+        
+        let filter = SCContentFilter(display: display, excludingWindows: [])
+        let config = SCStreamConfiguration()
+        config.width = Int(display.width)
+        config.height = Int(display.height)
+    
+        return try await SCScreenshotManager.captureImage(
+            contentFilter: filter,
+            configuration: config
+        )
+    }
 }
