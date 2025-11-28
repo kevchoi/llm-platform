@@ -9,6 +9,19 @@ import Foundation
 import ScreenCaptureKit
 import Combine
 
+// Simple struct for JSON encoding
+struct WindowInfo: Codable {
+    let windowID: UInt32
+    let title: String
+    let app: String
+    let bundleID: String
+    let x: CGFloat
+    let y: CGFloat
+    let width: CGFloat
+    let height: CGFloat
+    let isActive: Bool
+}
+
 @MainActor
 class ScreenMonitor: ObservableObject {
     @Published var windows: [SCWindow] = []
@@ -46,6 +59,36 @@ class ScreenMonitor: ObservableObject {
             }
         } catch {
             print("Error fetching windows: \(error.localizedDescription)")
+        }
+    }
+    
+    func sendToServer() async {
+        let windowInfos = windows.map { window in
+            WindowInfo(
+                windowID: window.windowID,
+                title: window.title ?? "",
+                app: window.owningApplication?.applicationName ?? "",
+                bundleID: window.owningApplication?.bundleIdentifier ?? "",
+                x: window.frame.origin.x,
+                y: window.frame.origin.y,
+                width: window.frame.width,
+                height: window.frame.height,
+                isActive: window.isActive
+            )
+        }
+        
+        guard let url = URL(string: "http://localhost:8080/windows") else { return }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        do {
+            request.httpBody = try JSONEncoder().encode(windowInfos)
+            let (_, response) = try await URLSession.shared.data(for: request)
+            print("Sent to server: \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+        } catch {
+            print("Error sending to server: \(error)")
         }
     }
 
