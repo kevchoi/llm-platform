@@ -107,4 +107,43 @@ class ScreenMonitor: ObservableObject {
             configuration: config
         )
     }
+
+    func sendScreenshot() async {
+        do {
+            guard let cgImage = try await captureScreen() else {
+                print("Failed to capture screen")
+                return
+            }
+            
+            // Convert CGImage to PNG data
+            let bitmapRep = NSBitmapImageRep(cgImage: cgImage)
+            guard let pngData = bitmapRep.representation(using: .png, properties: [:]) else {
+                print("Failed to convert to PNG")
+                return
+            }
+            
+            // Create multipart request
+            let boundary = UUID().uuidString
+            guard let url = URL(string: "http://localhost:8080/screenshot") else { return }
+            
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+            
+            // Build multipart body
+            var body = Data()
+            body.append("--\(boundary)\r\n".data(using: .utf8)!)
+            body.append("Content-Disposition: form-data; name=\"screenshot\"; filename=\"screenshot.png\"\r\n".data(using: .utf8)!)
+            body.append("Content-Type: image/png\r\n\r\n".data(using: .utf8)!)
+            body.append(pngData)
+            body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+            
+            request.httpBody = body
+            
+            let (_, response) = try await URLSession.shared.data(for: request)
+            print("Screenshot sent: \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+        } catch {
+            print("Error sending screenshot: \(error)")
+        }
+    }
 }
