@@ -22,11 +22,64 @@ struct WindowInfo: Codable {
     let isActive: Bool
 }
 
+// MARK: - API Client
+
+class APIClient {
+    static let shared = APIClient()
+    private let baseURL = "http://localhost:8080"
+    
+    private init() {}
+    
+    func sendWindows(_ windowInfos: [WindowInfo]) async {
+        guard let url = URL(string: "\(baseURL)/windows") else { return }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        do {
+            request.httpBody = try JSONEncoder().encode(windowInfos)
+            let (_, response) = try await URLSession.shared.data(for: request)
+            print("Sent to server: \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+        } catch {
+            print("Error sending to server: \(error)")
+        }
+    }
+    
+    func sendScreenshot(_ pngData: Data) async {
+        let boundary = UUID().uuidString
+        guard let url = URL(string: "\(baseURL)/screenshot") else { return }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        
+        var body = Data()
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"screenshot\"; filename=\"screenshot.png\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: image/png\r\n\r\n".data(using: .utf8)!)
+        body.append(pngData)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+        
+        request.httpBody = body
+        
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            print("Screenshot sent: \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+        } catch {
+            print("Error sending screenshot: \(error)")
+        }
+    }
+}
+
+// MARK: - Screen Monitor
+
 @MainActor
 class ScreenMonitor: ObservableObject {
     @Published var windows: [SCWindow] = []
+    private let api = APIClient.shared
     
-    init () {}
+    init() {}
 
     func getWindows() async {
         do {
@@ -76,20 +129,7 @@ class ScreenMonitor: ObservableObject {
                 isActive: window.isActive
             )
         }
-        
-        guard let url = URL(string: "http://localhost:8080/windows") else { return }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        do {
-            request.httpBody = try JSONEncoder().encode(windowInfos)
-            let (_, response) = try await URLSession.shared.data(for: request)
-            print("Sent to server: \((response as? HTTPURLResponse)?.statusCode ?? 0)")
-        } catch {
-            print("Error sending to server: \(error)")
-        }
+        await api.sendWindows(windowInfos)
     }
 
     func captureScreen() async throws -> CGImage? {
@@ -115,35 +155,15 @@ class ScreenMonitor: ObservableObject {
                 return
             }
             
-            // Convert CGImage to PNG data
             let bitmapRep = NSBitmapImageRep(cgImage: cgImage)
             guard let pngData = bitmapRep.representation(using: .png, properties: [:]) else {
                 print("Failed to convert to PNG")
                 return
             }
             
-            // Create multipart request
-            let boundary = UUID().uuidString
-            guard let url = URL(string: "http://localhost:8080/screenshot") else { return }
-            
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-            
-            // Build multipart body
-            var body = Data()
-            body.append("--\(boundary)\r\n".data(using: .utf8)!)
-            body.append("Content-Disposition: form-data; name=\"screenshot\"; filename=\"screenshot.png\"\r\n".data(using: .utf8)!)
-            body.append("Content-Type: image/png\r\n\r\n".data(using: .utf8)!)
-            body.append(pngData)
-            body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
-            
-            request.httpBody = body
-            
-            let (_, response) = try await URLSession.shared.data(for: request)
-            print("Screenshot sent: \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+            await api.sendScreenshot(pngData)
         } catch {
-            print("Error sending screenshot: \(error)")
+            print("Error capturing screen: \(error)")
         }
     }
 }
