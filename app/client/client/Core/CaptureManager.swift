@@ -1,5 +1,34 @@
 import Foundation
 import ScreenCaptureKit
+import AppKit
+
+// MARK: - Focus Observer
+
+public final class FocusObserver: @unchecked Sendable {
+    public typealias FocusChangeHandler = @Sendable (String, String) -> Void  // (appName, bundleID)
+    
+    private var observer: NSObjectProtocol?
+    private let handler: FocusChangeHandler
+    
+    public init(onChange handler: @escaping FocusChangeHandler) {
+        self.handler = handler
+        
+        observer = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
+            self?.handler(app.localizedName ?? "Unknown", app.bundleIdentifier ?? "")
+        }
+    }
+    
+    deinit {
+        if let observer = observer {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+        }
+    }
+}
 
 // MARK: - Protocol
 
