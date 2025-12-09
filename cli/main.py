@@ -1,3 +1,4 @@
+import dis
 import time
 import subprocess
 import ScreenCaptureKit as sck
@@ -5,9 +6,79 @@ from threading import Event
 from AppKit import NSRunLoop, NSDate
 from PIL import Image
 import Quartz
+import datetime
+from typing import Tuple, List
+
+class Window:
+    windowId: int
+    title: str
+    processId: int
+    bundleId: str
+    applicationName: str
+    windowLayer: int
+    x: int
+    y: int
+    width: int
+    height: int
+    z: int
+    
+    def __init__(self, windowId: int, title: str, processId: int, bundleId: str, applicationName: str, windowLayer: int, x: int, y: int, width: int, height: int, z: int):
+        self.windowId = windowId
+        self.title = title
+        self.processId = processId
+        self.bundleId = bundleId
+        self.applicationName = applicationName
+        self.windowLayer = windowLayer
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.z = z
+
+class Display:
+    displayId: int
+    x: int
+    y: int
+    width: int
+    height: int
+    screenshot: Image
+
+    def __init__(self, displayId: int, x: int, y: int, width: int, height: int, screenshot: Image):
+        self.displayId = displayId
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.screenshot = screenshot
+
+class CaptureEvent:
+    name: str
+    time: datetime.datetime
+    displays: List[Display]
+    windows: List[Window]
+
+    def __init__(self, name: str, time: datetime.datetime, displays: List[Display], windows: List[Window]):
+        self.name = name
+        self.time = time
+        self.displays = displays
+        self.windows = windows
+
+def get_window_order():
+    """Get window IDs in z-order (frontmost first)."""
+    window_list = Quartz.CGWindowListCopyWindowInfo(
+        Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements,
+        Quartz.kCGNullWindowID
+    )
+    
+    # Returns dict: window_id -> z_index (0 = frontmost)
+    order = {}
+    for i, window in enumerate(window_list):
+        if window.get(Quartz.kCGWindowLayer, 0) == 0:  # Normal windows only
+            window_id = window.get(Quartz.kCGWindowNumber)
+            order[window_id] = i
+    return order
 
 class CaptureHelper:
-
     def __init__(self):
         self.shareable_content = None
     
@@ -33,20 +104,56 @@ class CaptureHelper:
             )
         self.shareable_content = content_holder[0]
 
-    def get_window_info(self):
+    def get_capture_event(self):
         self._capture()
+        displays = []
+        windows = []
+
+        window_order = get_window_order()
+
         for display in self.shareable_content.displays():
-            print(display.displayID())
-            print(display.frame())
             screenshot = self._capture_screenshot(display)
             img = self._cgimage_to_pil(screenshot)
-            img.save(f"screenshot_{display.displayID()}.png")
-            img.show()
-        # for window in self.shareable_content.windows():
-        #     if window.windowLayer() == 0 and window.title() != "":
-        #         print(window.owningApplication())
-        #         print(window.title())
-        #         print(window.frame())
+            displays.append(Display(
+                displayId=display.displayID(),
+                x=display.frame().origin.x,
+                y=display.frame().origin.y,
+                width=display.frame().size.width,
+                height=display.frame().size.height,
+                screenshot=img,
+            ))
+        for window in self.shareable_content.windows():
+            if window.windowLayer() != 0:
+                continue
+            if window.frame().size.width == 0 or window.frame().size.height == 0:
+                continue
+            if window.title() == "":
+                continue
+            if not window.isOnScreen():
+                continue
+            if not window.isActive():
+                continue
+            z_index = window_order.get(window.windowID(), 999)
+            windows.append(Window(
+                windowId=window.windowID(),
+                title=window.title(),
+                processId=window.owningApplication().processID(),
+                bundleId=window.owningApplication().bundleIdentifier(),
+                applicationName=window.owningApplication().applicationName(),
+                windowLayer=window.windowLayer(),
+                x=window.frame().origin.x,
+                y=window.frame().origin.y,
+                width=window.frame().size.width,
+                height=window.frame().size.height,
+                z=z_index,
+            ))
+
+        return CaptureEvent(
+            name="capture",
+            time=datetime.datetime.now(),
+            displays=displays,
+            windows=windows,
+        )
 
     def _capture_screenshot(self, display):
         # Create filter for this display (exclude nothing)
@@ -101,4 +208,9 @@ def main():
 
 if __name__ == "__main__":
     capture_helper = CaptureHelper()
-    capture_helper.get_window_info()
+    capture_event = capture_helper.get_capture_event()
+
+    for display in capture_event.displays:
+        print(f"Display {display.displayId} ({display.x}, {display.y}, {display.width}, {display.height})")
+    for window in capture_event.windows:
+        print(f"Window {window.windowId} {window.applicationName} {window.title} at {window.x}, {window.y}, {window.width}, {window.height} (layer {window.windowLayer}, z {window.z})")
