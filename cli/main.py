@@ -3,11 +3,15 @@ import time
 import subprocess
 import ScreenCaptureKit as sck
 from threading import Event
+import json
 from AppKit import NSRunLoop, NSDate
 from PIL import Image
 import Quartz
 import datetime
 from typing import Tuple, List
+import base64
+import io
+from anthropic import Anthropic  # or use openai
 
 class Window:
     windowId: int
@@ -199,6 +203,64 @@ class CaptureHelper:
 def show_notification(title: str, message: str):
     subprocess.run(["osascript", "-e", f'display notification "{message}" with title "{title}"'])
 
+def analyze_productivity(capture_event: CaptureEvent, goal: str) -> dict:
+    """Send a CaptureEvent to an LLM to analyze if the user is productive."""
+    
+    # Convert screenshots to base64
+    images_base64 = []
+    for display in capture_event.displays:
+        buffer = io.BytesIO()
+        display.screenshot.save(buffer, format="PNG")
+        img_base64 = base64.standard_b64encode(buffer.getvalue()).decode("utf-8")
+        images_base64.append(img_base64)
+    
+    # Build window context
+    window_info = "\n".join([
+        f"- {w.applicationName}: '{w.title}' (z-order: {w.z})"
+        for w in sorted(capture_event.windows, key=lambda w: w.z)
+    ])
+    
+    # Create the prompt
+    prompt = f"""The user's goal for this session is: "{goal}"
+
+Current time: {capture_event.time.strftime("%H:%M:%S")}
+
+Open windows (front to back):
+{window_info}
+
+Based on the screenshot(s) and window information, analyze:
+1. Is the user currently focused on their stated goal?
+2. What are they actually doing?
+3. Productivity score (0-10)
+4. Brief suggestion if they're off-track
+
+Respond as JSON with keys: focused (bool), activity (str), score (int), suggestion (str or null)"""
+
+    # Call the LLM with vision
+    client = Anthropic()
+    
+    content = [{"type": "text", "text": prompt}]
+    for img_b64 in images_base64:
+        content.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/png",
+                "data": img_b64,
+            }
+        })
+    
+    response = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=500,
+        messages=[
+            {"role": "user", "content": content},
+            {"role": "assistant", "content": "{"}
+        ]
+    )
+    
+    return json.loads("{" + response.content[0].text)
+
 def main():
     goal = input("What's your goal for this session? ")
     duration_minutes = 25
@@ -207,6 +269,7 @@ def main():
     end_time = time.time() + (duration_minutes * 60)
 
 if __name__ == "__main__":
+    goal = input("What's your goal for this session? ")
     capture_helper = CaptureHelper()
     capture_event = capture_helper.get_capture_event()
 
@@ -214,3 +277,9 @@ if __name__ == "__main__":
         print(f"Display {display.displayId} ({display.x}, {display.y}, {display.width}, {display.height})")
     for window in capture_event.windows:
         print(f"Window {window.windowId} {window.applicationName} {window.title} at {window.x}, {window.y}, {window.width}, {window.height} (layer {window.windowLayer}, z {window.z})")
+
+    result = analyze_productivity(capture_event, goal=goal)
+    print(result)
+    print(f"Focused: {result['focused']}, Score: {result['score']}/10")
+    if result['suggestion']:
+        show_notification("Focus Check", result['suggestion'])
