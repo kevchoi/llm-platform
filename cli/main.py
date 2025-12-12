@@ -8,7 +8,7 @@ from AppKit import NSRunLoop, NSDate
 from PIL import Image
 import Quartz
 import datetime
-from typing import Tuple, List
+from typing import List
 import base64
 import io
 from anthropic import Anthropic  # or use openai
@@ -264,22 +264,46 @@ Respond as JSON with keys: focused (bool), activity (str), score (int), suggesti
 def main():
     goal = input("What's your goal for this session? ")
     duration_minutes = 25
-    interval_seconds = 60
+    interval_seconds = 30
 
     end_time = time.time() + (duration_minutes * 60)
+    capture_helper = CaptureHelper()
+
+    print(f"Running focus checks every {interval_seconds}s for {duration_minutes} minutes. Press Ctrl+C to stop.")
+
+    printed_layout = False
+    try:
+        while time.time() < end_time:
+            capture_event = capture_helper.get_capture_event()
+
+            # Print display/window layout once (useful for debugging without spamming).
+            if not printed_layout:
+                for display in capture_event.displays:
+                    print(
+                        f"Display {display.displayId} ({display.x}, {display.y}, {display.width}, {display.height})"
+                    )
+                for window in capture_event.windows:
+                    print(
+                        f"Window {window.windowId} {window.applicationName} {window.title} "
+                        f"at {window.x}, {window.y}, {window.width}, {window.height} "
+                        f"(layer {window.windowLayer}, z {window.z})"
+                    )
+                printed_layout = True
+
+            result = analyze_productivity(capture_event, goal=goal)
+            ts = capture_event.time.strftime("%H:%M:%S")
+            suggestion = result.get("suggestion")
+            print(f"[{ts}] Focused: {result.get('focused')}, Score: {result.get('score')}/10")
+            if suggestion:
+                print(f"[{ts}] Suggestion: {suggestion}")
+                show_notification("Focus Check", suggestion)
+
+            remaining = end_time - time.time()
+            if remaining <= 0:
+                break
+            time.sleep(min(interval_seconds, remaining))
+    except KeyboardInterrupt:
+        print("\nStopped.")
 
 if __name__ == "__main__":
-    goal = input("What's your goal for this session? ")
-    capture_helper = CaptureHelper()
-    capture_event = capture_helper.get_capture_event()
-
-    for display in capture_event.displays:
-        print(f"Display {display.displayId} ({display.x}, {display.y}, {display.width}, {display.height})")
-    for window in capture_event.windows:
-        print(f"Window {window.windowId} {window.applicationName} {window.title} at {window.x}, {window.y}, {window.width}, {window.height} (layer {window.windowLayer}, z {window.z})")
-
-    result = analyze_productivity(capture_event, goal=goal)
-    print(result)
-    print(f"Focused: {result['focused']}, Score: {result['score']}/10")
-    if result['suggestion']:
-        show_notification("Focus Check", result['suggestion'])
+    main()
