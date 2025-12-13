@@ -2,7 +2,7 @@ import dis
 import time
 import subprocess
 import ScreenCaptureKit as sck
-from threading import Event
+from threading import Event, Thread
 import json
 from AppKit import NSRunLoop, NSDate
 from PIL import Image
@@ -203,6 +203,17 @@ class CaptureHelper:
 def show_notification(title: str, message: str):
     subprocess.run(["osascript", "-e", f'display notification "{message}" with title "{title}"'])
 
+def _safe_show_notification(title: str, message: str) -> None:
+    """
+    Best-effort notifications: never crash the CLI if osascript fails.
+    (E.g. running in CI / missing permissions / no UI session.)
+    """
+    try:
+        show_notification(title, message)
+    except Exception:
+        # Notifications are optional; terminal output is still shown.
+        pass
+
 def analyze_productivity(capture_event: CaptureEvent, goal: str) -> dict:
     """Send a CaptureEvent to an LLM to analyze if the user is productive."""
     
@@ -232,7 +243,7 @@ Based on the screenshot(s) and window information, analyze:
 1. Is the user currently focused on their stated goal?
 2. What are they actually doing?
 3. Productivity score (0-10)
-4. Brief suggestion if they're off-track
+4. Brief one-sentence suggestion if they're off-track
 
 Respond as JSON with keys: focused (bool), activity (str), score (int), suggestion (str or null)"""
 
@@ -261,47 +272,97 @@ Respond as JSON with keys: focused (bool), activity (str), score (int), suggesti
     
     return json.loads("{" + response.content[0].text)
 
+def _goal_reminder_loop(stop: Event, interval_seconds: float, initial_delay_seconds: float) -> None:
+    """
+    While we're blocked on input(), periodically remind the user to set a goal.
+    Runs in a daemon thread and stops when `stop` is set.
+    """
+    if initial_delay_seconds > 0:
+        # Sleep in small increments so Ctrl+C still feels responsive.
+        remaining = initial_delay_seconds
+        while remaining > 0 and not stop.is_set():
+            step = min(0.25, remaining)
+            time.sleep(step)
+            remaining -= step
+
+    while not stop.is_set():
+        msg = "Please enter a goal to start focus checks."
+        print(f"\n{msg}\n", flush=True)
+        _safe_show_notification("Set a goal", msg)
+
+        remaining = interval_seconds
+        while remaining > 0 and not stop.is_set():
+            step = min(0.25, remaining)
+            time.sleep(step)
+            remaining -= step
+
+def prompt_for_goal() -> str:
+    """Continuously prompt until the user provides a non-empty goal."""
+    while True:
+        stop = Event()
+        # Keep this frequent enough to be noticeable, but not constant spam.
+        reminder_thread = Thread(
+            target=_goal_reminder_loop,
+            args=(stop, 15.0, 3.0),
+            daemon=True,
+        )
+        reminder_thread.start()
+
+        goal = input("What's your goal for this session? ").strip()
+        stop.set()
+        reminder_thread.join(timeout=1.0)
+        if goal:
+            return goal
+        print("Please enter a goal (it can't be empty). Press Ctrl+C to exit.")
+        _safe_show_notification("Goal required", "Please enter a goal (it can't be empty).")
+
 def main():
-    goal = input("What's your goal for this session? ")
     duration_minutes = 25
     interval_seconds = 30
-
-    end_time = time.time() + (duration_minutes * 60)
     capture_helper = CaptureHelper()
 
-    print(f"Running focus checks every {interval_seconds}s for {duration_minutes} minutes. Press Ctrl+C to stop.")
+    print(
+        f"Running focus checks every {interval_seconds}s for {duration_minutes} minutes per goal. "
+        f"Press Ctrl+C to stop."
+    )
 
-    printed_layout = False
     try:
-        while time.time() < end_time:
-            capture_event = capture_helper.get_capture_event()
+        while True:
+            goal = prompt_for_goal()
+            end_time = time.time() + (duration_minutes * 60)
 
-            # Print display/window layout once (useful for debugging without spamming).
-            if not printed_layout:
-                for display in capture_event.displays:
-                    print(
-                        f"Display {display.displayId} ({display.x}, {display.y}, {display.width}, {display.height})"
-                    )
-                for window in capture_event.windows:
-                    print(
-                        f"Window {window.windowId} {window.applicationName} {window.title} "
-                        f"at {window.x}, {window.y}, {window.width}, {window.height} "
-                        f"(layer {window.windowLayer}, z {window.z})"
-                    )
-                printed_layout = True
+            printed_layout = False
+            while time.time() < end_time:
+                capture_event = capture_helper.get_capture_event()
 
-            result = analyze_productivity(capture_event, goal=goal)
-            ts = capture_event.time.strftime("%H:%M:%S")
-            suggestion = result.get("suggestion")
-            print(f"[{ts}] Focused: {result.get('focused')}, Score: {result.get('score')}/10")
-            if suggestion:
-                print(f"[{ts}] Suggestion: {suggestion}")
-                show_notification("Focus Check", suggestion)
+                # Print display/window layout once (useful for debugging without spamming).
+                if not printed_layout:
+                    for display in capture_event.displays:
+                        print(
+                            f"Display {display.displayId} ({display.x}, {display.y}, {display.width}, {display.height})"
+                        )
+                    for window in capture_event.windows:
+                        print(
+                            f"Window {window.windowId} {window.applicationName} {window.title} "
+                            f"at {window.x}, {window.y}, {window.width}, {window.height} "
+                            f"(layer {window.windowLayer}, z {window.z})"
+                        )
+                    printed_layout = True
 
-            remaining = end_time - time.time()
-            if remaining <= 0:
-                break
-            time.sleep(min(interval_seconds, remaining))
+                result = analyze_productivity(capture_event, goal=goal)
+                ts = capture_event.time.strftime("%H:%M:%S")
+                suggestion = result.get("suggestion")
+                print(f"[{ts}] Focused: {result.get('focused')}, Score: {result.get('score')}/10")
+                if suggestion:
+                    print(f"[{ts}] Suggestion: {suggestion}")
+                    show_notification("Focus Check", suggestion)
+
+                remaining = end_time - time.time()
+                if remaining <= 0:
+                    break
+                time.sleep(min(interval_seconds, remaining))
+
+            print("\nSession complete — let's set a new goal.\n")
     except KeyboardInterrupt:
         print("\nStopped.")
 
