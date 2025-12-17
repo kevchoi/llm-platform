@@ -18,3 +18,7 @@ python main.py
 
 You’ll be prompted for a goal; the tool will run periodic checks for 25 minutes, then prompt for a new goal.
 
+
+Next:
+
+- Hybrid search (dense + sparse), reranking, eval harness.
