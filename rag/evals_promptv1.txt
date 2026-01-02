@@ -1,0 +1,6 @@
+Given a question and the relevant context, decide if the question is answerable from the context. Keep the answer concise and don't start with articles unless necessary.
+
+Return exactly valid JSON (and nothing else) with this schema:
+{"answerable": true|false, "answer": "<string>"}
+
+If unanswerable, set "answerable" to false and "answer" to "".
